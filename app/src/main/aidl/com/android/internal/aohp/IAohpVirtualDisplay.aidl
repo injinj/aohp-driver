@@ -1,0 +1,52 @@
+/*
+ * Copyright (C) 2026 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * @hide
+ */
+package com.android.internal.aohp;
+
+/** @hide */
+interface IAohpVirtualDisplay {
+    void registerSession(int displayId, int ownerUid, String ownerPackage);
+    void unregisterSession();
+    void setFocusPackage(String packageName);
+    boolean startLauncherOnDisplay(int displayId, String packageName);
+    boolean injectTap(int displayId, int x, int y);
+    /** Like {@link #injectTap} but always applies {@code checkTapPolicy} (empty target is ALLOW). */
+    boolean injectTapWithTarget(int displayId, int x, int y, String targetResourceId);
+    boolean injectSwipe(int displayId, int x1, int y1, int x2, int y2, int durationMs);
+    boolean injectText(int displayId, String text);
+    /** Like {@link #injectText} but passes {@code targetResourceId} for sensitivity / consent policy. */
+    boolean injectTextWithTarget(int displayId, String targetResourceId, String text);
+    boolean injectKeyEvent(int displayId, int keyCode);
+    void applyMultiDisplayDeveloperSettings();
+    /** @param extraDisplayIds optional ids to merge (e.g. app-known MediaProjection VD); may be null */
+    String getDisplayRuntimeSnapshotJson(in int[] extraDisplayIds);
+
+    /** Privileged: create a virtual display without MediaProjection. Returns displayId or -1. */
+    int createVirtualDisplay(String name, int width, int height, int densityDpi, int flags);
+    /** Release a display created by {@link #createVirtualDisplay}. */
+    boolean destroyVirtualDisplay(int displayId);
+
+    /** Privileged UI tree dump for any logical display (JSON). See AohpUiTreeDumper in system_server. */
+    String dumpUiTree(int displayId, int flags);
+
+    /**
+     * AOHP: set SeekBar/slider progress for a node id from {@link #dumpUiTree} (JSON result).
+     */
+    String setNodeProgress(int displayId, int nodeId, float percent, int flags);
+
+    /**
+     * AOHP: clear text via accessibility {@code ACTION_SET_TEXT} (empty). {@code nodeId > 0} matches
+     * ui.tree ids; {@code nodeId <= 0} clears the focused editable on the display.
+     */
+    String clearEditableText(int displayId, int nodeId, int flags);
+
+    /**
+     * AOHP: set text via accessibility {@code ACTION_SET_TEXT}. {@code nodeId <= 0} targets the
+     * focused editable on the display.
+     */
+    String setEditableText(int displayId, int nodeId, String text, int flags);
+}

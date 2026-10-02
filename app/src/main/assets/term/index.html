@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="xterm.css">
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#0b0f14; overflow:hidden; }
+  #term { position:absolute; inset:0; padding:4px; box-sizing:border-box; }
+  .xterm .xterm-viewport { overflow-y: auto !important; }
+</style>
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+</head>
+<body>
+<div id="term"></div>
+<script>
+(function(){
+  var term = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: 'monospace',
+    scrollback: 5000,
+    convertEol: false,
+    allowProposedApi: true,
+    theme: { background: '#0b0f14', foreground: '#d8dee9', cursor: '#7fd1ae' }
+  });
+  var fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('term'));
+  window.term = term;
+
+  function b64ToBytes(b64) {
+    var bin = atob(b64), len = bin.length, out = new Uint8Array(len);
+    for (var i = 0; i < len; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  // Called from Kotlin: base64 of raw bytes from the pty.
+  window.termWrite = function(b64) { term.write(b64ToBytes(b64)); };
+  window.termClear = function() { term.clear(); };
+  window.termFocus = function() { term.focus(); };
+  window.termPaste = function(txt) { term.paste(txt); };
+
+  var lastCols = 0, lastRows = 0;
+  function doFit() {
+    try { fit.fit(); } catch (e) { return; }
+    if (term.cols !== lastCols || term.rows !== lastRows) {
+      lastCols = term.cols; lastRows = term.rows;
+      if (window.AohpTerm) AohpTerm.onResize(term.cols, term.rows);
+    }
+  }
+  window.termFit = doFit;
+  term.onData(function(d) { if (window.AohpTerm) AohpTerm.onInput(d); });
+  term.onBinary(function(d) { if (window.AohpTerm) AohpTerm.onBinary(d); });
+  window.addEventListener('resize', function(){ setTimeout(doFit, 50); });
+  setTimeout(doFit, 0);
+  setTimeout(doFit, 300);
+  if (window.AohpTerm) AohpTerm.onReady();
+  // Tapping the terminal area should bring up the soft keyboard.
+  document.getElementById('term').addEventListener('click', function(){ term.focus(); });
+})();
+</script>
+</body>
+</html>
