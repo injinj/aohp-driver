@@ -148,7 +148,7 @@ private fun LogCard(st: HarnessState, vm: HarnessViewModel) {
             val scroll = rememberScrollState()
             LaunchedEffect(st.log) { scroll.scrollTo(scroll.maxValue) }
             Column(Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 320.dp).background(Color(0xFF0B0F14), RoundedCornerShape(6.dp)).padding(8.dp).verticalScroll(scroll)) {
-                Text(st.log.ifEmpty { "(empty)" }, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFD8DEE9),
+                Text(stripAnsi(st.log).ifEmpty { "(empty)" }, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFD8DEE9),
                     modifier = Modifier.horizontalScroll(rememberScrollState()))
             }
         }
@@ -193,7 +193,7 @@ private fun BootstrapProgressDialog(b: BootstrapRun, onDismiss: () -> Unit) {
             Text(if (b.running) "Bootstrapping…" else if (b.exitCode == 0) "Bootstrap done" else "Bootstrap failed (exit " + b.exitCode + ")") } },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 420.dp).background(Color(0xFF0B0F14), RoundedCornerShape(6.dp)).padding(8.dp).verticalScroll(scroll)) {
-                Text(b.output, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFD8DEE9), modifier = Modifier.horizontalScroll(rememberScrollState()))
+                Text(stripAnsi(b.output), fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFD8DEE9), modifier = Modifier.horizontalScroll(rememberScrollState()))
             }
         },
         confirmButton = { TextButton(onClick = onDismiss, enabled = !b.running) { Text("Close") } })
@@ -204,6 +204,9 @@ private fun StatusPill(text: String, color: Color) {
     Text(text, color = Color.White, style = MaterialTheme.typography.labelMedium,
         modifier = Modifier.background(color, RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 3.dp))
 }
+
+private val ANSI = Regex("\u001B\\[[0-?]*[ -/]*[@-~]|\u001B\\][^\u0007]*(\u0007|\u001B\\\\)")
+fun stripAnsi(s: String): String = s.replace(ANSI, "").replace("\r", "")
 
 fun fmtUptime(s: Long): String = when {
     s < 60 -> "${s}s"; s < 3600 -> "${s / 60}m"; s < 86400 -> "${s / 3600}h ${(s % 3600) / 60}m"; else -> "${s / 86400}d ${(s % 86400) / 3600}h"

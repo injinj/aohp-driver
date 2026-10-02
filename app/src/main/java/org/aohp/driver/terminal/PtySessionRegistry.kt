@@ -26,6 +26,8 @@ class PtySession(val env: String, private val pfd: ParcelFileDescriptor) {
     private val input = FileInputStream(pfd.fileDescriptor)
     private val output = FileOutputStream(pfd.fileDescriptor)
     private val writeQueue = LinkedBlockingQueue<ByteArray>()
+    /** Identity sentinel that stops the writer thread. Never compare by content: xterm can emit empty onData() (IME composition). */
+    private val poison = ByteArray(0)
     @Volatile var closed = false
         private set
     @Volatile var exitReason: String? = null
@@ -48,8 +50,9 @@ class PtySession(val env: String, private val pfd: ParcelFileDescriptor) {
                 deliver(buf.copyOf(n))
             }
         } catch (t: Throwable) {
-            if (!closed) exitReason = "read failed: " + t.message
+            if (!closed) { exitReason = "read failed: " + t.message; Log.w(TAG, "pty reader $env", t) }
         }
+        Log.i(TAG, "pty reader $env finished: $exitReason")
         closed = true
         onClosed?.invoke()
     }, "pty-reader-$env").apply { isDaemon = true }
@@ -58,11 +61,12 @@ class PtySession(val env: String, private val pfd: ParcelFileDescriptor) {
         try {
             while (!closed) {
                 val chunk = writeQueue.take()
-                if (chunk.isEmpty()) break
+                if (chunk === poison) break
+                if (chunk.isEmpty()) continue
                 output.write(chunk); output.flush()
             }
         } catch (t: Throwable) {
-            if (!closed) { exitReason = "write failed: " + t.message; closed = true; onClosed?.invoke() }
+            if (!closed) { exitReason = "write failed: " + t.message; Log.w(TAG, "pty writer $env", t); closed = true; onClosed?.invoke() }
         }
     }, "pty-writer-$env").apply { isDaemon = true }
 
@@ -88,7 +92,7 @@ class PtySession(val env: String, private val pfd: ParcelFileDescriptor) {
 
     @Synchronized fun detach() { sink = null; onClosed = null }
 
-    fun write(bytes: ByteArray) { if (!closed) writeQueue.offer(bytes) }
+    fun write(bytes: ByteArray) { if (!closed && bytes.isNotEmpty()) writeQueue.offer(bytes) }
     fun write(text: String) = write(text.toByteArray(Charsets.UTF_8))
 
     /**
@@ -96,15 +100,25 @@ class PtySession(val env: String, private val pfd: ParcelFileDescriptor) {
      * here; tell the shell instead. Echoes in the terminal until containerd gets
      * resizeShell. Only sent when the size actually changes.
      */
+    private val resizeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingResize: Runnable? = null
     fun resize(c: Int, r: Int) {
-        if (c <= 0 || r <= 0 || (c == cols && r == rows)) return
-        cols = c; rows = r
-        write("stty cols $c rows $r\n")
+        if (c <= 0 || r <= 0) return
+        // Debounce: the keyboard animation produces a burst of sizes; only the final one matters.
+        pendingResize?.let { resizeHandler.removeCallbacks(it) }
+        val run = Runnable {
+            pendingResize = null
+            if (c == cols && r == rows) return@Runnable
+            cols = c; rows = r
+            write("stty cols $c rows $r\n")
+        }
+        pendingResize = run
+        resizeHandler.postDelayed(run, 400)
     }
 
     fun close() {
         closed = true
-        writeQueue.offer(ByteArray(0))
+        writeQueue.offer(poison)
         runCatching { pfd.close() }
         Log.i(TAG, "pty session closed for $env")
     }

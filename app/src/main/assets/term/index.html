@@ -52,7 +52,8 @@
   window.termFit = doFit;
   term.onData(function(d) { if (window.AohpTerm) AohpTerm.onInput(d); });
   term.onBinary(function(d) { if (window.AohpTerm) AohpTerm.onBinary(d); });
-  window.addEventListener('resize', function(){ setTimeout(doFit, 50); });
+  var fitTimer = null;
+  window.addEventListener('resize', function(){ if (fitTimer) clearTimeout(fitTimer); fitTimer = setTimeout(doFit, 150); });
   setTimeout(doFit, 0);
   setTimeout(doFit, 300);
   if (window.AohpTerm) AohpTerm.onReady();

@@ -5,6 +5,11 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
@@ -49,6 +54,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing) {
+            org.aohp.driver.terminal.TerminalHolder.destroyAll()
+            (application as DriverApp).ptySessions.closeAll()
+        }
+    }
+
     /** Deliverable-1 proof: log getService + listContainers result. */
     private fun probeServices() {
         val app = application as DriverApp
@@ -62,12 +75,16 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DriverRoot() {
     var tab by rememberSaveable { mutableStateOf(Tab.Runtime) }
+    // Hide the tab bar while the soft keyboard is up (terminal / web input);
+    // insets consumed here so screens' imePadding() doesn't double-count the nav bar.
+    val imeVisible = WindowInsets.isImeVisible
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            if (!imeVisible) NavigationBar {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
@@ -79,9 +96,9 @@ fun DriverRoot() {
             }
         },
     ) { padding ->
-        val m = Modifier.padding(padding)
-        // All four composables stay in the composition? No: we switch, but
-        // Terminal/Web hold their state in app-scoped objects so switching is cheap.
+        val m = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
+        // Screens are swapped, not stacked; Terminal/Web keep their state in
+        // app-scoped objects (PtySessionRegistry / WebHolder) so switching is cheap.
         when (tab) {
             Tab.Runtime -> RuntimeScreen(m)
             Tab.Harness -> HarnessScreen(m, onGoToTab = { tab = it })
