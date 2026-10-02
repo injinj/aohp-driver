@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -65,7 +66,10 @@ fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, onSet
     Scaffold(
         modifier = modifier,
         topBar = { TopAppBar(title = { Text("Harness" + (st.env?.let { " · $it" } ?: "")) },
-            actions = { IconButton(onClick = { vm.refresh(); vm.loadSecrets() }) { Icon(Icons.Filled.Refresh, "Refresh") } }) },
+            actions = {
+                IconButton(onClick = onSetup) { Icon(androidx.compose.material.icons.Icons.Filled.AddCircle, "Set up OpenClaw") }
+                IconButton(onClick = { vm.refresh(); vm.loadSecrets() }) { Icon(Icons.Filled.Refresh, "Refresh") }
+            }) },
         snackbarHost = { SnackbarHost(snack) },
     ) { pad ->
         if (st.env == null) {

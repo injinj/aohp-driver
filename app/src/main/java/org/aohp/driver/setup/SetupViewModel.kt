@@ -136,25 +136,39 @@ class SetupViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(credDone = true, credSummary = "${s.provider.label} key in Keystore (${s.provider.secretName})", step = SetupStep.Start) }
     }
 
-    /** Static script (no secrets inside); written with a quoted heredoc through execSync. */
+    /**
+     * Static script (no secrets inside). aohp-containerd's execSync only runs the first line of
+     * the command string, so the script travels base64-encoded on one line.
+     */
     private suspend fun installKeystoreLauncher(env: String) {
         val script = """#!/bin/sh
 # OpenClaw launcher installed by AOHP Driver setup.
-# 1) provider keys come from the phone's Android Keystore through the agent bridge (aohp secret get);
-#    a config-repo bootstrap (aohp-secrets) is honoured too if present.
+# 1) provider keys come from the phone's Android Keystore through the agent bridge (secret.get on
+#    ws://127.0.0.1:6666). 'aohp secret get' is used when the env's CLI has it; the template's
+#    aohp 0.1.0 does not, so a tiny Node client (openclaw's bundled 'ws'; Node's built-in undici
+#    WebSocket rejects Java-WebSocket's handshake) speaks the same JSON-RPC directly.
+#    A config-repo bootstrap (aohp-secrets) is honoured too if present.
 # 2) aohp-containerd injects NODE_OPTIONS=--jitless; Node 24 fetch() needs WebAssembly, so strip it.
+NODE_OPTIONS=${'$'}(printf '%s' "${'$'}{NODE_OPTIONS:-}" | sed -e 's/--jitless//g' -e 's/  */ /g' -e 's/^ //' -e 's/ ${'$'}//'); export NODE_OPTIONS
+aohp_secret_get() {
+  v=${'$'}(aohp secret get "${'$'}1" 2>/dev/null) && [ -n "${'$'}v" ] && { printf '%s' "${'$'}v"; return 0; }
+  node -e 'const n=process.argv[1];let W;try{W=require("/usr/local/lib/node_modules/openclaw/node_modules/ws")}catch(e){W=WebSocket};const ws=new W(process.env.AOHP_WS_URL||"ws://127.0.0.1:6666");
+ws.onopen=()=>ws.send(JSON.stringify({id:"1",method:"secret.get",params:{name:n}}));
+ws.onmessage=(m)=>{let o={};try{o=JSON.parse(m.data)}catch(e){};if(o.ok&&o.result&&o.result.value!=null)process.stdout.write(String(o.result.value));ws.close();process.exit(o.ok?0:1)};
+ws.onerror=()=>process.exit(2);setTimeout(()=>process.exit(3),8000);' "${'$'}1" 2>/dev/null
+}
 for v in ANTHROPIC_API_KEY OPENAI_API_KEY; do
-  k=${'$'}(aohp secret get "${'$'}v" 2>/dev/null) && [ -n "${'$'}k" ] && export "${'$'}v=${'$'}k"
+  k=${'$'}(aohp_secret_get "${'$'}v") && [ -n "${'$'}k" ] && export "${'$'}v=${'$'}k"
 done
 if command -v aohp-secrets >/dev/null 2>&1; then eval "${'$'}(aohp-secrets env 2>/dev/null)"; fi
-NODE_OPTIONS=${'$'}(printf '%s' "${'$'}{NODE_OPTIONS:-}" | sed -e 's/--jitless//g' -e 's/  */ /g' -e 's/^ //' -e 's/ ${'$'}//'); export NODE_OPTIONS
 exec /usr/local/bin/openclaw.real "${'$'}@"
 """
+        val b64 = android.util.Base64.encodeToString(script.toByteArray(), android.util.Base64.NO_WRAP)
         val cmd = "test -x /usr/local/bin/openclaw.real || { echo 'openclaw.real missing in env'; exit 3; }; " +
-            "cat > /usr/local/bin/openclaw.aohp-driver <<'__AOHP_EOF__'\n" + script + "__AOHP_EOF__\n" +
+            "printf '%s' '" + b64 + "' | base64 -d > /usr/local/bin/openclaw.aohp-driver && " +
             "chmod 755 /usr/local/bin/openclaw.aohp-driver && mv -f /usr/local/bin/openclaw.aohp-driver /usr/local/bin/openclaw && echo launcher-ok"
         val r = svc.execSync(env, cmd, 20_000).getOrThrow()
-        if (!r.ok || !r.stdout.contains("launcher-ok")) throw RuntimeException("launcher install failed: " + (r.stderr.ifEmpty { r.stdout }).take(300))
+        if (!r.ok || !r.stdout.contains("launcher-ok")) throw RuntimeException("launcher install failed (exit " + r.exitCode + "): " + (r.stderr.ifEmpty { r.stdout }).take(300))
         appendLog("installed Keystore-aware openclaw launcher in ${env}")
     }
 
@@ -224,13 +238,28 @@ exec /usr/local/bin/openclaw.real "${'$'}@"
         if (pid <= 0) throw RuntimeException("startService returned ${pid}")
         appendLog((if (running != null) "gateway already running pid " else "started gateway pid ") + pid + ", autostart=" + _state.value.autostart)
         _state.update { it.copy(gatewayPid = pid) }
+        // First start in a fresh env can take minutes: openclaw runs `npm install` for plugin deps
+        // (~/.openclaw/npm) before it listens. Poll up to 4 min and keep the user informed.
         var code: Int? = null
-        for (i in 1..30) { code = probe(); if (code != null && code in 200..399) break; delay(2000) }
+        val t0 = System.currentTimeMillis()
+        var i = 0
+        while (System.currentTimeMillis() - t0 < 240_000) {
+            code = probe(); if (code != null && code in 200..399) break
+            val alive = svc.listServices(env).getOrNull()?.any { it.serviceId == GATEWAY_SERVICE_ID && it.alive } == true
+            if (!alive) {
+                val tail = svc.serviceLog(env, GATEWAY_SERVICE_ID, 4000).getOrNull() ?: ""
+                appendLog("gateway process exited; log tail:\n" + tail.takeLast(1500))
+                throw RuntimeException("gateway exited before listening — see log")
+            }
+            if (++i % 10 == 0) appendLog("still waiting for http://127.0.0.1:18789 (" + ((System.currentTimeMillis() - t0) / 1000) + " s; first start installs plugin deps with npm, be patient)")
+            _state.update { it.copy(busy = "Waiting for the gateway to listen… " + ((System.currentTimeMillis() - t0) / 1000) + " s") }
+            delay(2000)
+        }
         _state.update { it.copy(httpCode = code) }
         if (code == null || code !in 200..399) {
             val tail = svc.serviceLog(env, GATEWAY_SERVICE_ID, 4000).getOrNull() ?: ""
-            appendLog("gateway did not answer on 18789 within 60 s; log tail:\n" + tail.takeLast(1500))
-            throw RuntimeException("gateway not reachable yet (HTTP " + (code ?: "none") + ") — check the log")
+            appendLog("gateway did not answer on 18789 within 4 min; log tail:\n" + tail.takeLast(1500))
+            throw RuntimeException("gateway not reachable yet (HTTP " + (code ?: "none") + ") — it is still running; tap Start gateway again to keep waiting, or check the Harness log")
         }
         appendLog("HTTP ${code} on ${GATEWAY_URL}")
         _state.update { it.copy(step = SetupStep.Done) }

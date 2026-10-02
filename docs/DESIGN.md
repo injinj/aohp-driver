@@ -189,16 +189,130 @@ The root Scaffold hides the bottom tab bar while the IME is visible and applies
 the Control UI's chat input sit directly above the keyboard without
 double-counting the navigation bar.
 
+## Agent bridge (v2)
+
+Goal: make the stock `AOHPAgentDriver` removable. The only thing the agent
+really needs from it is the ws JSON-RPC bridge the `aohp` CLI talks to
+(plus the Keystore secrets behind `secret.*`). Everything in
+`/aosp/templates/oc-state/workspace/skills/*/SKILL.md` resolves to these
+method families: `sandbox.*`, `display.*`, `shot.*`, `ui.*`, `act.*`,
+`app.*`, `sys.*`, `event.*`, `secret.*`, `meta.version`.
+
+### What was ported, how
+
+The stock executor was copied, not rewritten: `JsonCommandHandler`,
+`MyWebSocketServer` (-> `BridgeWebSocketServer`), `ShellExecutor`,
+`AohpVdClient`, `AohpAgentViewClient`, `AohpContainerClient`,
+`AohpEventStreamClient`, `AohpSecurityBridgeClient`, `CgroupUsage`,
+`SecretStore` moved into `org.aohp.driver.bridge` (Java, mixed with the
+Kotlin app), plus the `IAohpAgentView` / `IAohpSecurityBridge` AIDLs.
+`scripts`-free: the port is `/tmp/port_bridge.py`-style text surgery on the
+stock sources; the wire format is byte-identical (`meta.version` adds
+`"bridge":"aohp-driver"`).
+
+| family | status | note |
+|---|---|---|
+| meta.version, sandbox.*, display.*, shot.full/region/node, ui.tree/find, act.* (+ *_node), app.*, event.*, secret.* | ported | unchanged code paths (framework Binder services + shell) |
+| sys.screen_info/device_info/battery/network/notifications/wake/sleep/unlock | ported | wake/sleep/unlock = `input keyevent` as the app uid (`INJECT_EVENTS`), not yet exercised |
+| sys.clipboard, ui.focused, ui.input_text | **not ported** | implemented in the stock `MyAccessibilityService`; answer `{"error":{"code":"no_a11y"}}` exactly like stock does when its service is off |
+| file.*, uda.*, overlay.*, sms.send, sensor.camera.capture, ads | **dropped** | not used by the skills/CLI paths we support; `unknown_method` |
+
+### Three things the stock app got for free that the port had to solve
+
+1. **`ui.tree` returned 0 windows.** `AccessibilityManagerService.dumpUiTreeForDisplayInternal`
+   reads the a11y window list and app view-hierarchy connections, which the
+   framework only maintains while an accessibility service is enabled. The
+   stock app enabled its own `MyAccessibilityService` via
+   `WRITE_SECURE_SETTINGS`. The Driver ships `BridgeAccessibilityService`
+   (handles nothing) and `A11yKeepalive.ensureEnabled()` adds it to
+   `enabled_accessibility_services` when the bridge starts; Stop removes it.
+   Verified: 0 windows/0 nodes before, 3 windows/96 nodes after.
+2. **Java-WebSocket 1.3.6 crashed the app** (`AssertionError` in
+   `WebSocketImpl.decode`; debug builds keep `assert`). Upgraded to 1.5.7
+   (`getConnections()`, `setReuseAddr`, `onStart`).
+3. **Handlers ran on the ws worker threads.** Java-WebSocket pins
+   connections to N workers; a blocking `sandbox.exec` starved every other
+   connection on its worker — including the nested `aohp` calls made by the
+   command being executed, which then hung until the exec timeout. The
+   Driver dispatches each message to a cached thread pool
+   (`BridgeWebSocketServer.dispatchPool`). The stock app has the same latent
+   bug.
+
+### Service shape
+
+`BridgeService`: `foregroundServiceType="specialUse"` with
+`PROPERTY_SPECIAL_USE_FGS_SUBTYPE` (platform-signed, so allowed) — the stock
+app used `dataSync`, whose 6-hour cap killed its bridge. `START_STICKY`,
+partial wake lock while listening (parity with stock), notification channel
+`aohp_bridge`. Bind: `InetSocketAddress("127.0.0.1", 6666)` (shows as
+`[::ffff:127.0.0.1]:6666` in `ss` — dual-stack socket, still loopback-only).
+State is a `StateFlow<BridgeState>` (running, port, clients, error, a11y
+flags, last autostart log) consumed by the Runtime card.
+`DriverApp.onCreate` starts it unless the user pressed Stop
+(`bridge_enabled` in DataStore).
+
+### Boot sequence
+
+`RECEIVE_BOOT_COMPLETED` -> `BootReceiver` -> `BridgeService.start(autostart=true)`:
+ws server first (the gateway launcher needs `secret.get`), then poll
+`listContainers()` every 2 s for up to 3 min, then for each env in
+`autostart_envs` (DataStore string set, Runtime card switch) start
+`openclaw-gateway` unless `listServices` says it is alive.
+
+### Secret migration
+
+`LegacySecretImport` is a Java-WebSocket *client*: connects to
+`ws://127.0.0.1:6666` while the stock app still owns it, refuses to import
+from itself (`meta.version.app`), `secret.list` -> `secret.get` ->
+`SecretStore.set` per name. Values never hit a log or the screen; the
+Runtime card only lists names.
+
+## First-run wizard (v2)
+
+`setup/SetupWizard.kt` (one Compose screen per step, Back/Next) over
+`SetupViewModel`. Entry points: Harness "Set up OpenClaw" card (no env, or
+selected env has no `openclaw-gateway` service) and the ⊕ action in the
+Harness top bar.
+
+- **Env**: `createContainer(name, template)` (sub-minute on this device
+  because containerd caches the extracted template) or reuse.
+- **Credentials / Paste**: `SecretStore.set(<PROVIDER>_API_KEY)`; then a
+  static launcher is installed as `/usr/local/bin/openclaw` in the env. It
+  resolves keys via `aohp secret get` or — because the template's `aohp`
+  0.1.0 predates `secret` — a 6-line Node client using openclaw's bundled
+  `ws` (Node's undici `WebSocket` fails Java-WebSocket's handshake with a
+  `TypeError` in `processResponse`). The script is sent base64 on one line
+  because **containerd `execSync` only executes the first line** of the
+  command string. For OpenAI the primary model in `openclaw.json` is
+  switched with a `node -e` JSON edit.
+- **Credentials / Git**: `aohp-bootstrap <user>/<repo>` (fetched from
+  `injinj/aohp-agents` if the env lacks it). Passphrase and GitHub token are
+  parked in the Keystore as `AOHP_SETUP_*`, pulled by the env with
+  `aohp secret get` into `umask 077` files, passed as `--passphrase-file` /
+  `--token-file`, and both the files and the temp secrets are deleted after.
+  Output is tee'd to `/tmp/aohp-setup-bootstrap.log` and polled every 2 s.
+- **Start**: `setAutostart`, `startService`, poll `http://127.0.0.1:18789/`
+  up to 4 min; a first start runs `npm install` for plugin deps
+  (`~/.openclaw/npm`) and took ~90 s on the OnePlus 13.
+
+Verified 2026-10-02 on env `fresh` with a dummy OpenAI key: Control UI
+loaded ("No models available", as expected without a valid key); the key
+name appeared in the gateway's environment; no key material in the rootfs.
+
 ## Out of scope for v1
 
 UDA, ads, overlay, MediaProjection recording, File Bridge UI, the Contacts
-"CLI contact test", hosting the ws bridge. Virtual displays appear only as a
+"CLI contact test". Virtual displays appear only as a
 read-only list on the Runtime screen.
 
 ## Roadmap after v1
 
 1. `resizeShell` across containerd/framework/AIDL (+ PR upstream).
-2. Move the ws bridge into a system service with a Unix socket bind-mounted
-   into the rootfs; this app becomes a client of that too.
+2. (done in v2 as an app-hosted bridge) — longer term, move it into a
+   system service with a Unix socket bind-mounted into the rootfs.
+4. containerd: `stopService` must kill the process group (today the `node`
+   child outlives the `sh -c` wrapper and keeps :18789); `execSync` should
+   accept multi-line commands; ship a newer `aohp` CLI (with `secret`) in
+   the template.
 3. Harness plugins: Claude Code / Codex / OpenCode status alongside OpenClaw.
 

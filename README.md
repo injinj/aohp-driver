@@ -5,17 +5,94 @@ the Linux container runtime, the OpenClaw harness inside it, an interactive
 terminal, and the OpenClaw Control UI — four bottom tabs.
 
 It is a **client** of the AOHP framework services (`aohp_container`,
-`aohp_virtual_display`) over Binder. It does not host the agent ws-bridge
-(the stock AOHPAgentDriver keeps doing that) and has no foreground service.
+`aohp_virtual_display`, `aohp_event_stream`, `aohp_security_bridge`) over
+Binder, and since v2 it also **hosts the agent bridge**: the JSON-RPC-over-
+WebSocket server on `127.0.0.1:6666` that the `aohp` CLI inside a container
+talks to. With v2 installed the stock `org.aohp.agentdriver` app can be
+disabled (see [Agent bridge](#agent-bridge-v2)).
 
 | Tab | What it does |
 |---|---|
-| **Runtime** | containerd health, one card per env (template, rootfs, services, cgroup, usage), Select / Reset / Destroy (typed confirm) / Create (template picker), read-only virtual display list |
-| **Harness** | OpenClaw gateway state (listServices + HTTP probe of 127.0.0.1:18789 and /health), Start / Stop / Restart, service list, log tail with auto-refresh, Bootstrap dialog (`aohp-bootstrap <user>/<repo>` with polled progress), secret *names* via `aohp-secrets list` |
+| **Runtime** | containerd health, **Agent bridge card** (state, bind, clients, a11y keepalive, secret names, Start/Stop, Import legacy secrets), one card per env (template, rootfs, services, cgroup, usage, **Autostart gateway on boot** switch), Select / Reset / Destroy (typed confirm) / Create (template picker), read-only virtual display list |
+| **Harness** | OpenClaw gateway state (listServices + HTTP probe of 127.0.0.1:18789 and /health), Start / Stop / Restart, service list, log tail with auto-refresh, Bootstrap dialog, secret *names*; **“Set up OpenClaw” card / ⊕ button** opens the first-run wizard |
 | **Terminal** | `openShell` → xterm.js in a WebView; extra key row (Esc Tab Ctrl Alt arrows Home End PgUp PgDn …); one shell per env, survives tab switches |
 | **Web** | WebView on http://127.0.0.1:18789/ (Control UI); JS + DOM storage; non-loopback links open in the system browser; "gateway down" placeholder |
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the design and the device facts it rests on.
+
+## Agent bridge (v2)
+
+The bridge is a foreground service (`bridge/BridgeService.kt`,
+`foregroundServiceType="specialUse"` — *not* `dataSync`, whose 6-hour limit
+killed the stock app's bridge) that runs the stock app's
+`JsonCommandHandler` (ported, same wire format) behind a Java-WebSocket
+server bound to **127.0.0.1:6666 only** (the stock app bound 0.0.0.0).
+It starts with the app process, on `BOOT_COMPLETED`, and from the Runtime
+card. RPCs run on their own thread pool so a long `sandbox.exec` cannot
+block other connections (nested `aohp` calls from inside an exec used to
+deadlock on the stock design).
+
+**Ported** (`meta.version`, `sandbox.*`, `display.*`, `shot.*`, `ui.*`,
+`act.*` incl. `*_node`, `app.*`, `sys.*`, `event.*`, `secret.*`) /
+**not ported** (`file.*`, `uda.*`, `overlay.*`, `sms.send`,
+`sensor.camera.capture`, ads; `sys.clipboard`, `ui.focused`,
+`ui.input_text` answer `no_a11y` because they need the stock app's
+AccessibilityService logic) — details and reasons in
+[docs/DESIGN.md](docs/DESIGN.md#agent-bridge-v2).
+
+**UI tree needs an enabled accessibility service.** `ui.tree` and the
+node actions are served by the framework's AccessibilityManagerService
+hooks, which only track windows while *some* accessibility service is
+enabled. The Driver ships a no-op one (`BridgeAccessibilityService`) and
+enables it itself through `WRITE_SECURE_SETTINGS` when the bridge starts
+(the stock app did the same with `MyAccessibilityService`).
+
+**Secrets** live in the Android Keystore (`SecretStore`, same format as the
+stock fork). `Import legacy secrets` on the Runtime card connects to the
+stock app's bridge as a client and copies every `secret.list` name over
+without showing a value.
+
+### Cutover from the stock app
+
+```
+# 1. install v2, open Runtime -> Agent bridge -> Import legacy secrets (while the stock app still owns :6666)
+# 2. disable the stock app, confirm :6666 is free, start the Driver bridge
+adb shell pm disable-user --user 0 org.aohp.agentdriver
+adb shell ss -ltnp | grep 6666          # nothing
+# Runtime -> Agent bridge -> Start   (or just relaunch the app)
+adb shell ss -ltnp | grep 6666          # [::ffff:127.0.0.1]:6666 users:(("org.aohp.driver",...))
+# 3. inside the env: aohp connect / aohp secret list / aohp shot full -d 0 / aohp ui tree -d 0
+```
+
+To go back: Runtime -> Agent bridge -> **Stop** (frees :6666 and removes the
+a11y keepalive from secure settings), then
+`adb shell pm enable org.aohp.agentdriver` and launch it.
+
+### Boot sequence
+
+`BOOT_COMPLETED` -> `BootReceiver` -> `BridgeService.start(autostart=true)`
+-> ws server up -> poll `aohp_container.listContainers` (up to 3 min) ->
+for every env with the **Autostart** switch on: `startService(env,
+"openclaw-gateway", "openclaw gateway")` unless already alive. The result
+is logged (`logcat -s AohpDriver`, `autostart:`) and shown on the bridge
+card. The gateway's launcher reads the provider key through the bridge, so
+the order matters.
+
+## First-run wizard (Harness -> “Set up OpenClaw…”)
+
+1. **Environment** — name (default `oc`), template picker; existing name =
+   "Use existing".
+2. **Credentials** — *Paste an API key* (provider Anthropic/OpenAI;
+   stored with `secret.set` semantics in the Keystore, never in the rootfs;
+   installs a launcher `/usr/local/bin/openclaw` in the env that exports
+   the key from the bridge at start and strips `--jitless`), *Import from a
+   git config repo* (`aohp-bootstrap <user>/<repo>`; age passphrase /
+   GitHub token are parked in the Keystore and pulled by the env with
+   `aohp secret get` into 0600 temp files — never on a command line; log
+   streamed), or *Skip*.
+3. **Start the gateway** — autostart switch, `startService`, waits up to
+   4 min for HTTP on 18789 (first start runs `npm install` for plugin deps).
+4. **Ready** — “Open Control UI” switches to the Web tab.
 
 ## Requirements
 
@@ -59,6 +136,8 @@ app/src/main/aidl/com/android/internal/aohp/   IAohpContainer / IAohpVirtualDisp
 app/src/main/assets/term/                      xterm.js 6.0.0 + addon-fit 0.11.0 (vendored from npm) + index.html
 app/src/main/java/org/aohp/driver/
   binder/     ServiceManagerCompat (reflection getService), ContainerService, VirtualDisplayService
+  bridge/     BridgeService (specialUse FGS), BridgeWebSocketServer, JsonCommandHandler + ShellExecutor + Aohp*Client (ported from the stock app), SecretStore, LegacySecretImport, BootReceiver, A11yKeepalive
+  setup/      SetupWizard + SetupViewModel (first-run flow)
   runtime/    RuntimeScreen + RuntimeViewModel
   harness/    HarnessScreen + HarnessViewModel
   terminal/   PtySession/PtySessionRegistry (fd I/O), TerminalScreen (TermBridge, TerminalView, TerminalHolder)
@@ -80,7 +159,34 @@ Captured with `adb -s e6d11a7c exec-out screencap -p > file.png`, stored in `doc
 - `harness-scratch-eaddrinuse.png` — gateway started in a 2nd env; log tail shows EADDRINUSE (shared netns)
 - `bootstrap-result.png` — Bootstrap dialog after a run (exit 127: tool absent in the fresh template)
 
-## Known gaps (v1)
+v2 (bridge + wizard):
+
+- `v2-bridge-bindfail.png` — bridge card while the stock app still owns :6666 (bind error, Import button)
+- `v2-import.png` — after *Import legacy secrets* (1 name copied, value never shown)
+- `v2-bridge-up.png` — bridge LISTENING on 127.0.0.1:6666 after the stock app was disabled
+- `v2-harness-setup.png` — Harness with the ⊕ setup action
+- `v2-wizard-env.png`, `v2-wizard-creds.png`, `v2-wizard-start.png`, `v2-wizard-done.png` — the four wizard steps on a throwaway env `fresh`
+- `v2-web-fresh.png` — Control UI served by the gateway the wizard started in `fresh`
+
+## Known gaps
+
+v2:
+
+- **containerd `stopService` leaves the gateway running.** It kills the
+  `sh -c` wrapper only; the `node` child survives (reparented to init) and
+  keeps :18789, so Stop/Restart from the Harness cannot free the port until
+  containerd kills the process group. Seen twice on 2026-10-02.
+- **containerd `execSync` runs only the first line** of the command string.
+  Multi-line scripts must be sent base64-encoded on one line (the wizard
+  does this for the launcher).
+- The template's `aohp` CLI (0.1.0) has no `secret` subcommand; the
+  wizard's launcher therefore carries a Node fallback client (openclaw's
+  bundled `ws`). Node's built-in undici `WebSocket` rejects
+  Java-WebSocket's handshake.
+- `sys.wake/sleep/unlock` run `input keyevent` as the app uid
+  (`INJECT_EVENTS` declared, platform-signed) — not exercised yet.
+
+v1:
 
 - **Resize**: the shell PFD is a socket relay, so the app cannot TIOCSWINSZ
   the pty. It sends `stty cols C rows R` after connect and on (debounced)
