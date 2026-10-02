@@ -259,6 +259,13 @@ ws server first (the gateway launcher needs `secret.get`), then poll
 `autostart_envs` (DataStore string set, Runtime card switch) start
 `openclaw-gateway` unless `listServices` says it is alive.
 
+Reboot test 2026-10-02 (OnePlus 13, stock app disabled, no app opened):
+`sys.boot_completed` -> +0 s bridge listening + a11y keepalive enabled ->
++0.02 s `autostart: oc: started openclaw-gateway pid 5506` -> +11 s
+`127.0.0.1:18789` owned by `openclaw-gateway` in `oc`, `HTTP 200`,
+`/health {"ok":true,"status":"live"}`, `ANTHROPIC_API_KEY` present in the
+gateway's environment (fetched through the bridge).
+
 ### Secret migration
 
 `LegacySecretImport` is a Java-WebSocket *client*: connects to
