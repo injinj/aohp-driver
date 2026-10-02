@@ -134,6 +134,7 @@ private fun EnvCardView(env: EnvCard, selected: Boolean, busy: Boolean, onSelect
             d?.cgroup?.let { cg ->
                 KeyValue("cgroup", if (cg.enabled) "on (mem max ${cg.memoryMaxConfigured})" else if (cg.v2Detected) "v2 detected, off" else "off")
             }
+            if (env.usage?.cgroupEnabled == false) KeyValue("usage", "cgroup dir missing (" + env.usage.cgroupPath + ")")
             env.usage?.takeIf { it.cgroupEnabled }?.let { u ->
                 KeyValue("mem", human(u.memoryCurrent) + " / " + u.memoryMax.ifEmpty { "?" } + "  (peak " + human(u.memoryPeak) + ")")
                 KeyValue("cpu", (u.cpuUsageUsec / 1_000_000).toString() + " s")
@@ -160,7 +161,9 @@ private fun DisplaysCard(st: RuntimeState) {
                 st.displaysError != null -> Text(st.displaysError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 st.displays.isEmpty() -> Text("none", style = MaterialTheme.typography.bodyMedium)
                 else -> st.displays.forEach { d ->
-                    KeyValue("#" + d.displayId + " " + d.name, if (d.width > 0) "${d.width}×${d.height}" else "", mono = true)
+                    val kind = when (d.type) { 1 -> "internal"; 2 -> "external"; 5 -> "virtual"; else -> "type " + d.type }
+                    KeyValue("#" + d.displayId + " " + d.name.ifEmpty { "(unnamed)" }, (if (d.width > 0) "${d.width}×${d.height} " else "") + kind, mono = true)
+                    if (d.topActivity.isNotEmpty()) Text("   top: " + d.topActivity, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 }
             }
         }

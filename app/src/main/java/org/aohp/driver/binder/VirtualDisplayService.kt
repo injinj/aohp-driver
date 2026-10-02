@@ -7,7 +7,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class VirtualDisplayInfo(val displayId: Int, val name: String, val width: Int, val height: Int, val raw: String)
+data class VirtualDisplayInfo(val displayId: Int, val name: String, val width: Int, val height: Int, val type: Int, val state: Int, val topActivity: String, val raw: String)
 
 /** Read-only status over IAohpVirtualDisplay (v1: list only). */
 class VirtualDisplayService {
@@ -31,10 +31,15 @@ class VirtualDisplayService {
     /** Best-effort parse: looks for an array of display objects anywhere at top level. */
     suspend fun listDisplays(): Result<List<VirtualDisplayInfo>> = snapshotJson().map { raw ->
         val out = mutableListOf<VirtualDisplayInfo>()
+        // Schema (ActivityTaskManagerService.buildAohpDisplayRuntimeSnapshotJson):
+        // {timestamp, displays:[{displayId, display:{name,type,logicalWidth,logicalHeight,state,...}, topRunningActivity:{...}, rootTasks:[...]}]}
         fun add(o: JSONObject) {
-            val id = o.optInt("displayId", o.optInt("id", -1))
-            out += VirtualDisplayInfo(id, o.optString("name", ""), o.optInt("width", o.optInt("w", 0)),
-                o.optInt("height", o.optInt("h", 0)), o.toString())
+            val id = o.optInt("displayId", -1)
+            val d = o.optJSONObject("display") ?: o
+            val top = o.optJSONObject("topRunningActivity")
+            val topName = top?.optString("component", top.optString("packageName", "")) ?: ""
+            out += VirtualDisplayInfo(id, d.optString("name", ""), d.optInt("logicalWidth", 0), d.optInt("logicalHeight", 0),
+                d.optInt("type", -1), d.optInt("state", -1), topName, o.toString())
         }
         runCatching {
             val top = JSONObject(raw)
