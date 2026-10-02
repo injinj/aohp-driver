@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">AOHP Driver</string>
+    <string name="a11y_keepalive_label">AOHP Driver UI-tree keepalive</string>
+    <string name="a11y_keepalive_description">Keeps the framework accessibility layer active so the AOHP agent bridge can read UI trees and act on nodes. Handles no events itself.</string>
 </resources>

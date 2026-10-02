@@ -56,7 +56,7 @@ import org.aohp.driver.ui.KeyValue
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, vm: HarnessViewModel = viewModel()) {
+fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, onSetup: () -> Unit = {}, vm: HarnessViewModel = viewModel()) {
     val st by vm.state.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
     var showBootstrap by remember { mutableStateOf(false) }
@@ -68,9 +68,16 @@ fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, vm: H
             actions = { IconButton(onClick = { vm.refresh(); vm.loadSecrets() }) { Icon(Icons.Filled.Refresh, "Refresh") } }) },
         snackbarHost = { SnackbarHost(snack) },
     ) { pad ->
-        if (st.env == null) { CenteredMessage("Select an environment on the Runtime tab first.", Modifier.padding(pad)); return@Scaffold }
+        if (st.env == null) {
+            Column(Modifier.padding(pad).fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SetupCard("No environment yet", "Create a Linux env, add a provider key and start the OpenClaw gateway.", onSetup)
+            }
+            return@Scaffold
+        }
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (st.busy != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (st.servicesError == null && st.services.none { it.serviceId == GATEWAY_SERVICE_ID })
+                SetupCard("OpenClaw is not set up in ‘" + st.env + "’", "No openclaw-gateway service has been started here yet. The wizard adds a provider key (or imports a config repo), starts the gateway and can enable autostart on boot.", onSetup)
             GatewayCard(st, vm, onGoToTab, onBootstrap = { showBootstrap = true })
             ServicesCard(st, vm)
             LogCard(st, vm)
@@ -80,6 +87,18 @@ fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, vm: H
     }
     if (showBootstrap) BootstrapDialog(st.bootstrapRepo, onDismiss = { showBootstrap = false }) { repo -> showBootstrap = false; vm.bootstrap(repo) }
     st.bootstrap?.let { b -> BootstrapProgressDialog(b, onDismiss = { if (!b.running) vm.dismissBootstrap() }) }
+}
+
+@Composable
+private fun SetupCard(title: String, body: String, onSetup: () -> Unit) {
+    Card(Modifier.fillMaxWidth(), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+        Column(Modifier.padding(12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(body, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onSetup) { Text("Set up OpenClaw…") }
+        }
+    }
 }
 
 @Composable

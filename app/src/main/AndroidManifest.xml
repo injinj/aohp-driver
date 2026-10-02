@@ -49,6 +49,20 @@
                 android:value="Local JSON-RPC bridge between the AOHP Linux container agent and Android framework services (aohp CLI)" />
         </service>
 
+        <!-- no-op a11y service; enabled by the app itself so framework ui-tree hooks have windows (see A11yKeepalive) -->
+        <service
+            android:name=".bridge.BridgeAccessibilityService"
+            android:exported="true"
+            android:label="@string/a11y_keepalive_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
         <receiver
             android:name=".bridge.BootReceiver"
             android:exported="true"

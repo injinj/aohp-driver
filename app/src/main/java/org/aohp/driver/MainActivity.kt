@@ -79,6 +79,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DriverRoot() {
     var tab by rememberSaveable { mutableStateOf(Tab.Runtime) }
+    var setup by rememberSaveable { mutableStateOf(false) }
+    if (setup) {
+        org.aohp.driver.setup.SetupWizard(onClose = { setup = false }, onFinish = { t -> setup = false; tab = t })
+        return
+    }
     // Hide the tab bar while the soft keyboard is up (terminal / web input);
     // insets consumed here so screens' imePadding() doesn't double-count the nav bar.
     val imeVisible = WindowInsets.isImeVisible
@@ -101,7 +106,7 @@ fun DriverRoot() {
         // app-scoped objects (PtySessionRegistry / WebHolder) so switching is cheap.
         when (tab) {
             Tab.Runtime -> RuntimeScreen(m)
-            Tab.Harness -> HarnessScreen(m, onGoToTab = { tab = it })
+            Tab.Harness -> HarnessScreen(m, onGoToTab = { tab = it }, onSetup = { setup = true })
             Tab.Terminal -> TerminalScreen(m)
             Tab.Web -> WebScreen(m, onGoToTab = { tab = it })
         }

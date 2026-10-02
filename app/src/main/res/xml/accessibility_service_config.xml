@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No-op service. Its only purpose is to keep the framework's accessibility
+     window tracking + app view-hierarchy connections alive, which
+     aohp_virtual_display.dumpUiTree / *_node actions (AccessibilityManagerService
+     AOHP hooks) need. Without an enabled a11y service ui.tree returns 0 windows. -->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/a11y_keepalive_description"
+    android:notificationTimeout="1000" />

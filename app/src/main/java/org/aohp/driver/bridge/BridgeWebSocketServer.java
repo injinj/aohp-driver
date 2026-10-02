@@ -14,6 +14,8 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * WebSocket 服务：仅接受 JSON 对象消息，由 {@link JsonCommandHandler} 处理（与 aohp CLI 一致）。
@@ -22,6 +24,17 @@ public class BridgeWebSocketServer extends WebSocketServer {
     private static final String TAG = "AohpDriver";
 
     private JsonCommandHandler jsonCommandHandler;
+    /**
+     * RPCs run here, not on the Java-WebSocket worker threads. A worker is pinned to a set of
+     * connections, and blocking handlers (sandbox.exec with a long timeout, createContainer)
+     * would starve every other connection on the same worker — including nested aohp calls
+     * made by the very command being executed (deadlock until the exec timeout).
+     */
+    private final ExecutorService dispatchPool = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "aohp-rpc");
+        t.setDaemon(true);
+        return t;
+    });
     private volatile boolean listening;
     private volatile Exception lastError;
 
@@ -56,7 +69,8 @@ public class BridgeWebSocketServer extends WebSocketServer {
         if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "onMessage: " + message);
         if (message != null && message.trim().startsWith("{")) {
             if (jsonCommandHandler != null) {
-                jsonCommandHandler.dispatch(conn, message);
+                final JsonCommandHandler h = jsonCommandHandler;
+                dispatchPool.execute(() -> h.dispatch(conn, message));
             } else {
                 try {
                     conn.send(
@@ -104,7 +118,7 @@ public class BridgeWebSocketServer extends WebSocketServer {
 
     public void stopServer() {
         listening = false;
-        for (WebSocket connection : connections()) {
+        for (WebSocket connection : getConnections()) {
             connection.close();
         }
         try {

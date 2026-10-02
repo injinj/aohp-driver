@@ -130,6 +130,7 @@ private fun BridgeCard(st: RuntimeState, onStart: () -> Unit, onStop: () -> Unit
             KeyValue("state", when { b.running -> "LISTENING"; b.starting -> "starting…"; b.error != null -> "ERROR"; else -> "stopped" })
             KeyValue("bind", "127.0.0.1:" + b.port, mono = true)
             KeyValue("clients", b.clients.toString())
+            KeyValue("a11y keepalive", when { b.a11yConnected -> "connected"; b.a11yEnabled -> "enabled, not connected yet"; else -> "off (ui.tree empty)" })
             KeyValue("secrets", if (st.secretNames.isEmpty()) "(none)" else st.secretNames.joinToString(", "), mono = true)
             b.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             b.autostartLog?.let { Text("boot: " + it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }

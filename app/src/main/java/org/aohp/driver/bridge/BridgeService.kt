@@ -33,6 +33,9 @@ data class BridgeState(
     val error: String? = null,
     /** Last autostart pass summary (boot path), for the Runtime card. */
     val autostartLog: String? = null,
+    /** Secure-settings state of the no-op accessibility keepalive (needed by ui.tree & node actions). */
+    val a11yEnabled: Boolean = false,
+    val a11yConnected: Boolean = false,
 )
 
 /**
@@ -105,6 +108,7 @@ class BridgeService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 stopServer()
+                A11yKeepalive.disable(this)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -149,15 +153,19 @@ class BridgeService : Service() {
                 }
                 server = s
                 acquireWakeLock()
-                _state.value = BridgeState(running = true, port = port)
+                val a11yErr = A11yKeepalive.ensureEnabled(this)
+                _state.value = BridgeState(running = true, port = port, error = a11yErr?.let { "a11y keepalive: $it" },
+                    a11yEnabled = A11yKeepalive.isEnabled(this), a11yConnected = BridgeAccessibilityService.connected)
                 notify("ws://127.0.0.1:$port")
                 Log.i(TAG, "bridge listening on 127.0.0.1:$port")
                 clientPoller?.cancel()
                 clientPoller = scope.launch {
                     while (true) {
                         delay(2000)
-                        val n = server?.connections()?.size ?: 0
-                        if (n != _state.value.clients) _state.value = _state.value.copy(clients = n)
+                        val n = server?.connections?.size ?: 0
+                        val a = BridgeAccessibilityService.connected
+                        if (n != _state.value.clients || a != _state.value.a11yConnected)
+                            _state.value = _state.value.copy(clients = n, a11yConnected = a, a11yEnabled = A11yKeepalive.isEnabled(this@BridgeService))
                     }
                 }
             } catch (e: Exception) {
