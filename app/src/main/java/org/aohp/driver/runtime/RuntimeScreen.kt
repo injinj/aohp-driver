@@ -83,8 +83,10 @@ fun RuntimeScreen(modifier: Modifier = Modifier, vm: RuntimeViewModel = viewMode
                 true -> LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item { ContainerdCard(st) }
+                    item { BridgeCard(st, onStart = { vm.startBridge() }, onStop = { vm.stopBridge() }, onImport = { vm.importLegacySecrets() }) }
                     items(st.envs, key = { it.name }) { env ->
                         EnvCardView(env, selected = env.name == st.selected, busy = st.busy != null,
+                            autostart = env.name in st.autostart, onAutostart = { vm.setAutostart(env.name, it) },
                             onSelect = { vm.select(env.name) }, onReset = { resetTarget = env.name }, onDestroy = { destroyTarget = env.name })
                     }
                     if (st.envs.isEmpty()) item { Text("No environments. Use + to create one.", Modifier.padding(8.dp)) }
@@ -120,7 +122,31 @@ private fun ContainerdCard(st: RuntimeState) {
 }
 
 @Composable
-private fun EnvCardView(env: EnvCard, selected: Boolean, busy: Boolean, onSelect: () -> Unit, onReset: () -> Unit, onDestroy: () -> Unit) {
+private fun BridgeCard(st: RuntimeState, onStart: () -> Unit, onStop: () -> Unit, onImport: () -> Unit) {
+    val b = st.bridge
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Agent bridge (ws)", style = MaterialTheme.typography.titleMedium)
+            KeyValue("state", when { b.running -> "LISTENING"; b.starting -> "starting…"; b.error != null -> "ERROR"; else -> "stopped" })
+            KeyValue("bind", "127.0.0.1:" + b.port, mono = true)
+            KeyValue("clients", b.clients.toString())
+            KeyValue("secrets", if (st.secretNames.isEmpty()) "(none)" else st.secretNames.joinToString(", "), mono = true)
+            b.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            b.autostartLog?.let { Text("boot: " + it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (b.running) OutlinedButton(onClick = onStop, enabled = st.busy == null) { Text("Stop") }
+                else Button(onClick = onStart, enabled = st.busy == null && !b.starting) { Text("Start") }
+                OutlinedButton(onClick = onImport, enabled = st.busy == null && !b.running) { Text("Import legacy secrets") }
+            }
+            if (!b.running) Text("Import connects to the stock AOHPAgentDriver bridge on :6666 and copies its secrets into this app's Keystore (stop this bridge first; values are never displayed).",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun EnvCardView(env: EnvCard, selected: Boolean, busy: Boolean, autostart: Boolean, onAutostart: (Boolean) -> Unit, onSelect: () -> Unit, onReset: () -> Unit, onDestroy: () -> Unit) {
     Card(Modifier.fillMaxWidth(), colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -142,6 +168,10 @@ private fun EnvCardView(env: EnvCard, selected: Boolean, busy: Boolean, onSelect
             }
             KeyValue("host dirs", listOfNotNull(if (d?.npmCacheHostDir == true) "npm-cache" else null, if (d?.openclawDevHostDir == true) "openclaw-dev" else null).ifEmpty { listOf("—") }.joinToString(", "))
             env.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Autostart gateway on boot", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                androidx.compose.material3.Switch(checked = autostart, onCheckedChange = onAutostart)
+            }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onSelect, enabled = !selected) { Text(if (selected) "Selected" else "Select") }

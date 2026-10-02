@@ -17,6 +17,12 @@ import org.aohp.driver.binder.Diagnose
 import org.aohp.driver.binder.ServiceManagerCompat
 import org.aohp.driver.binder.Usage
 import org.aohp.driver.binder.VirtualDisplayInfo
+import org.aohp.driver.bridge.BridgeService
+import org.aohp.driver.bridge.BridgeState
+import org.aohp.driver.bridge.LegacySecretImport
+import org.aohp.driver.bridge.SecretStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class EnvCard(
     val name: String,
@@ -38,6 +44,9 @@ data class RuntimeState(
     val busy: String? = null,                 // description of running action
     val message: String? = null,              // transient snackbar
     val refreshing: Boolean = false,
+    val bridge: BridgeState = BridgeState(),
+    val secretNames: List<String> = emptyList(),
+    val autostart: Set<String> = emptySet(),
 )
 
 class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
@@ -51,6 +60,8 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { settings.selectedEnv.collect { sel -> _state.update { it.copy(selected = sel) } } }
+        viewModelScope.launch { BridgeService.state.collect { b -> _state.update { it.copy(bridge = b) }; refreshSecrets() } }
+        viewModelScope.launch { settings.autostartEnvs.collect { a -> _state.update { it.copy(autostart = a) } } }
         refresh()
         autoJob = viewModelScope.launch { while (true) { delay(10_000); if (_state.value.busy == null) refresh(quiet = true) } }
     }
@@ -84,6 +95,30 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun select(name: String) = viewModelScope.launch { settings.setSelectedEnv(name) }
+    fun setAutostart(name: String, on: Boolean) = viewModelScope.launch { settings.setAutostart(name, on) }
+
+    private fun refreshSecrets() = viewModelScope.launch {
+        val names = withContext(Dispatchers.IO) { runCatching { SecretStore(getApplication()).list() }.getOrDefault(emptyList()) }
+        _state.update { it.copy(secretNames = names) }
+    }
+
+    fun startBridge() = viewModelScope.launch {
+        settings.setBridgeEnabled(true)
+        BridgeService.start(getApplication())
+    }
+
+    fun stopBridge() = viewModelScope.launch {
+        settings.setBridgeEnabled(false)
+        BridgeService.stop(getApplication())
+    }
+
+    /** Copy secret names+values from the stock app's bridge on :6666 into our Keystore. Values are never shown. */
+    fun importLegacySecrets() = action("Importing secrets from legacy bridge…") {
+        val r = withContext(Dispatchers.IO) { LegacySecretImport.run(getApplication()) }
+        refreshSecrets()
+        "Imported " + r.imported.size + " secret(s) from " + (r.remoteApp ?: "?") + ": " + r.imported.joinToString(", ") +
+            (if (r.failed.isNotEmpty()) "; failed: " + r.failed.joinToString(", ") else "")
+    }
 
     fun create(name: String, template: String) = action("Creating $name from $template…") {
         val r = svc.createContainer(name, template).getOrThrow()

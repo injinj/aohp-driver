@@ -6,9 +6,13 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.aohp.driver.binder.ContainerService
 import org.aohp.driver.binder.VirtualDisplayService
 import org.aohp.driver.terminal.PtySessionRegistry
@@ -20,7 +24,18 @@ class Settings(private val ctx: Context) {
         val SELECTED_ENV = stringPreferencesKey("selected_env")
         val BOOTSTRAP_REPO = stringPreferencesKey("bootstrap_repo")
         const val DEFAULT_REPO = "injinj/aohp-config-chris"
+        val AUTOSTART_ENVS = stringSetPreferencesKey("autostart_envs")
+        val BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
     }
+    /** Envs whose openclaw-gateway the boot receiver starts (after the bridge is up). */
+    val autostartEnvs: Flow<Set<String>> = ctx.dataStore.data.map { it[AUTOSTART_ENVS] ?: emptySet() }
+    suspend fun setAutostart(env: String, on: Boolean) = ctx.dataStore.edit { p ->
+        val cur = p[AUTOSTART_ENVS] ?: emptySet()
+        p[AUTOSTART_ENVS] = if (on) cur + env else cur - env
+    }
+    /** Whether the app should bring the bridge up when it starts (default true). */
+    val bridgeEnabled: Flow<Boolean> = ctx.dataStore.data.map { it[BRIDGE_ENABLED] ?: true }
+    suspend fun setBridgeEnabled(v: Boolean) = ctx.dataStore.edit { it[BRIDGE_ENABLED] = v }
     val selectedEnv: Flow<String?> = ctx.dataStore.data.map { it[SELECTED_ENV] }
     suspend fun setSelectedEnv(name: String?) = ctx.dataStore.edit { p -> if (name == null) p.remove(SELECTED_ENV) else p[SELECTED_ENV] = name }
     val bootstrapRepo: Flow<String> = ctx.dataStore.data.map { it[BOOTSTRAP_REPO] ?: DEFAULT_REPO }
@@ -41,5 +56,10 @@ class DriverApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Bring the agent bridge up with the process (unless the user stopped it);
+        // the boot receiver also starts it with autostart=true.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            if (settings.bridgeEnabled.first()) org.aohp.driver.bridge.BridgeService.start(this@DriverApp)
+        }
     }
 }
