@@ -85,13 +85,23 @@ fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, vm: H
 @Composable
 private fun GatewayCard(st: HarnessState, vm: HarnessViewModel, onGoToTab: (Tab) -> Unit, onBootstrap: () -> Unit) {
     val gw = st.services.firstOrNull { it.serviceId == GATEWAY_SERVICE_ID }
-    val up = st.probe?.up == true
+    val httpUp = st.probe?.up == true
+    val alive = gw?.alive == true
+    // The container shares the host netns, so :18789 answering is a device-wide
+    // signal; only call it UP when *this* env's service is the one running.
+    val (label, color) = when {
+        alive && httpUp -> "UP" to Color(0xFF2E7D32)
+        alive -> "STARTING" to Color(0xFFF9A825)
+        httpUp -> "PORT BUSY" to Color(0xFF6A1B9A)
+        else -> "DOWN" to Color(0xFFC62828)
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("OpenClaw gateway", style = MaterialTheme.typography.titleMedium)
-                StatusPill(if (up) "UP" else if (gw?.alive == true) "STARTING" else "DOWN", if (up) Color(0xFF2E7D32) else if (gw?.alive == true) Color(0xFFF9A825) else Color(0xFFC62828))
+                StatusPill(label, color)
             }
+            if (!alive && httpUp) Text("Port 18789 is served by another env or process (shared network namespace).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             KeyValue("service", if (gw == null) "not registered" else (if (gw.alive) "running pid " + gw.pid + ", up " + fmtUptime(gw.uptimeSec) else "stopped (last pid " + gw.pid + ")"))
             KeyValue("command", gw?.command?.ifEmpty { GATEWAY_COMMAND } ?: GATEWAY_COMMAND, mono = true)
             KeyValue("http", st.probe?.let { (if (it.up) "reachable" else "unreachable") + " · " + it.detail } ?: "probing…")
@@ -105,7 +115,7 @@ private fun GatewayCard(st: HarnessState, vm: HarnessViewModel, onGoToTab: (Tab)
                 OutlinedButton(onClick = { vm.stop() }, enabled = idle && gw?.alive == true) { Text("Stop") }
                 OutlinedButton(onClick = { vm.restart() }, enabled = idle) { Text("Restart") }
                 FilledTonalButton(onClick = onBootstrap, enabled = idle && st.bootstrap?.running != true) { Text("Bootstrap…") }
-                if (up) FilledTonalButton(onClick = { onGoToTab(Tab.Web) }) { Text("Open UI") }
+                if (httpUp) FilledTonalButton(onClick = { onGoToTab(Tab.Web) }) { Text("Open UI") }
             }
         }
     }
@@ -193,7 +203,7 @@ private fun BootstrapProgressDialog(b: BootstrapRun, onDismiss: () -> Unit) {
             Text(if (b.running) "Bootstrapping…" else if (b.exitCode == 0) "Bootstrap done" else "Bootstrap failed (exit " + b.exitCode + ")") } },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 420.dp).background(Color(0xFF0B0F14), RoundedCornerShape(6.dp)).padding(8.dp).verticalScroll(scroll)) {
-                Text(stripAnsi(b.output), fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFD8DEE9), modifier = Modifier.horizontalScroll(rememberScrollState()))
+                Text(stripAnsi(b.output).lines().filterNot { it.startsWith("__EXIT__=") }.joinToString("\n"), fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFD8DEE9))
             }
         },
         confirmButton = { TextButton(onClick = onDismiss, enabled = !b.running) { Text("Close") } })

@@ -33,13 +33,50 @@ stock AOHPAgentDriver keeps doing that for the agent inside the container).
   http://127.0.0.1:18789/ directly (verified: adb forward → HTTP 200).
 - Toolchain on chex: `/aosp/android-sdk` (platforms 36, build-tools 36.0.0), Java 21,
   Gradle 8.7 wrapper, AGP 8.5.1 known-good. `~/.gradle` cache is warm (800 MB).
-- Container paths on device: `/data/aohp/envs/<name>/{rootfs,services}`,
-  templates `/data/aohp/templates/<tpl>.tar.gz`. Our Debian env is named `oc`
-  (template `debian-oc`), harness bootstrap = `aohp-bootstrap <user>/<repo>`
+- Container paths on device: `/data/aohp/envs/<name>/{rootfs,services,.template}`,
+  templates **`/system/etc/aohp/rootfs-templates/<tpl>.tar.gz`** (containerd
+  `TEMPLATE_DIR`; world-readable, so the app lists templates by reading the
+  directory — there is no listTemplates AIDL). The only template on the device
+  is `debian` (605 MB). Our Debian env is named `oc` (template `debian`,
+  recorded in `.template`), harness bootstrap = `aohp-bootstrap <user>/<repo>`
   from https://github.com/injinj/aohp-agents ; secrets via `aohp-secrets`
   (age | keystore | paste).
 - The stock app's service id for the gateway is `openclaw-gateway`, command
   `openclaw gateway` (our launcher wrapper handles --jitless + secrets).
+
+### Corrections found while building v1 (2026-10-02)
+
+- Template dir is `/system/etc/aohp/rootfs-templates`, not `/data/aohp/templates`;
+  template name is `debian`, not `debian-oc`.
+- `diagnose()` JSON: `{container, template, rootfsExists, npmCacheHostDir,
+  openclawDevHostDir, cgroup:{cgroupV2Detected, cgroupEnabled, cgroupPath,
+  memoryMaxConfigured}}`. `getUsage()` JSON: `{cgroupEnabled, cgroupPath,
+  memoryCurrent, memoryMax, memoryPeak, cpuUsageUsec, pidsCurrent}`.
+  `listServices()`: array of `{serviceId, pid, alive, startTime, uptimeSec, command}`.
+- On the test phone `diagnose` reports cgroup **enabled** but `getUsage` says
+  the cgroup dir `/sys/fs/cgroup/aohp-oc` is **missing** → no mem/cpu/pids
+  figures. Containerd issue (cgroup create failed or dir vanished), not an
+  app bug; the Runtime card shows "usage: cgroup dir missing".
+- `getDisplayRuntimeSnapshotJson` returns
+  `{timestamp, displays:[{displayId, display:{name,type,logicalWidth,logicalHeight,state,…}, topRunningActivity, focusedActivity, rootTasks}]}`.
+- containerd does not reap exited `openShell` children: closed shells stay as
+  zombies (`[sh] Z`) under aohp-containerd. Cosmetic, upstream fix wanted.
+- xterm.js on Android emits `onData("")` around IME focus changes; treat
+  empty input as a no-op (it once killed our writer thread).
+- Keeping the terminal WebView alive per env (not just the pty) is required
+  for the scrollback to survive tab switches; done via `TerminalHolder`.
+- Because the netns is shared, the HTTP probe of :18789 is **device-wide**:
+  a second env's `openclaw gateway` fails with EADDRINUSE while `oc`'s is up.
+  The Harness pill therefore says UP only when *this* env's service is alive
+  and HTTP answers; HTTP-up-but-service-dead shows PORT BUSY.
+- The `debian` template already contains an openclaw install + config
+  (auth mode none) but **not** `aohp-bootstrap`/`aohp-secrets`; those were
+  added to `oc` by hand. Bootstrap in a fresh env therefore exits 127 until
+  the template grows them.
+- `resetContainer` re-extracts rootfs but keeps `services/` (meta/pid/log),
+  so a reset env still lists its old services as stopped.
+- `execSync` runs the command through `eval` in `/bin/sh`; errors read
+  `/bin/sh: 1: eval: <cmd>: not found`.
 
 ## App structure
 
@@ -78,14 +115,19 @@ app/src/main/java/org/aohp/driver/
 
 ### Terminal
 
-`assets/term/index.html` loads xterm.js + fit addon (vendored from npm
-@xterm/xterm, @xterm/addon-fit). Kotlin side: `PtySession` owns the
-ParcelFileDescriptor from `openShell`, a reader thread pushes bytes to JS via
-`evaluateJavascript("term.write(<base64>)")` (batched ~16 ms), and a
-`@JavascriptInterface` object receives keystrokes/paste and writes them to the
-fd. On fit/resize JS reports cols/rows; Kotlin sends `stty cols C rows R\n`
-(known gap: echoes in the shell until containerd grows resizeShell).
-One session per env, kept alive across tab switches while the Activity lives.
+`assets/term/index.html` loads xterm.js 6.0.0 + fit addon 0.11.0 (vendored
+from npm @xterm/xterm, @xterm/addon-fit; served through WebViewAssetLoader at
+https://appassets.androidplatform.net/assets/term/). Kotlin side:
+`PtySession` owns the ParcelFileDescriptor from `openShell`; a reader thread
+pushes bytes to JS via `evaluateJavascript("termWrite(<base64>)")`, a writer
+thread drains a queue into the fd, and `TermBridge` (`window.AohpTerm`)
+receives keystrokes/resize. Ctrl/Alt are sticky modifiers in the extra key
+row applied to the next character. On fit/resize JS reports cols/rows and
+Kotlin sends `stty cols C rows R\n` debounced 400 ms (known gap: echoes in the
+shell until containerd grows resizeShell). One `PtySession` **and one
+WebView** per env (`TerminalHolder`), kept alive across tab switches while
+the Activity lives; output that arrives while detached is buffered and
+replayed.
 
 ### Harness screen
 
@@ -113,6 +155,20 @@ hands them to the system browser (OAuth callbacks come back to loopback and
 stay inside). Pull-to-refresh and a "gateway down" placeholder that links to
 the Harness screen.
 
+## Verified on device (2026-10-02, OnePlus 13 / AOHP GSI, build 7)
+
+Runtime: list/diagnose/usage, Select (DataStore), Create `scratch` from
+`debian` (~2 min extraction), Reset, Destroy (typed confirm), VD list.
+Harness: UP/HTTP 200//health live for `oc`; Start on `scratch` → pid, log
+tail shows EADDRINUSE; Bootstrap dialog with polled output (exit 127 in
+scratch); secrets card ("not installed" in scratch). Not exercised on the
+device: Stop/Restart on `oc` (deliberately — it is the live gateway), the
+"gateway down" Web placeholder, external-link hand-off.
+Terminal: typing, Enter, Ctrl-C via sticky Ctrl, arrows/Esc/Tab keys, survives
+Runtime→Web→Terminal tab switches with scrollback. Web: Control UI loads,
+title propagates, back navigates the WebView.
+Screenshots in `docs/screenshots/`.
+
 ## Build / install (headless, from chex)
 
 ```
@@ -125,6 +181,13 @@ adb -s e6d11a7c shell am start -n org.aohp.driver/.MainActivity
 ```
 `scripts/sign-platform.sh` wraps apksigner with the tree's platform key
 (never copy the key into the repo). Gradle's own signingConfig stays debug.
+
+### Insets
+
+The root Scaffold hides the bottom tab bar while the IME is visible and applies
+`consumeWindowInsets(padding).imePadding()` to the content, so the terminal and
+the Control UI's chat input sit directly above the keyboard without
+double-counting the navigation bar.
 
 ## Out of scope for v1
 
