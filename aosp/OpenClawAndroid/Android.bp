@@ -1,0 +1,19 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+// OpenClaw Android app (ai.openclaw.app, thirdParty flavor, release/minified build) from
+// ~/openclaw-src/apps/android, preinstalled as a plain system app so a fresh AOHP device can be
+// paired with the on-phone gateway (manual setup: 127.0.0.1:18789) without sideloading.
+//
+// Prebuilt APK, NOT in git. It is signed with the dedicated, non-platform keystore
+// /aosp/keys/aohp-apps.jks (alias aohp-apps) — deliberately not the platform key, so the app
+// runs as an ordinary untrusted app and can later be updated by a release signed with the same
+// key. preprocessed: true => Soong only validates (zipalign -p 4, uncompressed .so) and copies the
+// APK; it never re-signs it. Refresh with /aosp/aohp/aohp-app/aohp-driver/scripts/update-aosp-openclaw-app.sh.
+android_app_import {
+    name: "OpenClawAndroid",
+    apk: "OpenClawAndroid.apk",
+    preprocessed: true,
+    privileged: false,
+}

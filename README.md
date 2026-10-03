@@ -168,6 +168,50 @@ v2 (bridge + wizard):
 - `v2-wizard-env.png`, `v2-wizard-creds.png`, `v2-wizard-start.png`, `v2-wizard-done.png` — the four wizard steps on a throwaway env `fresh`
 - `v2-web-fresh.png` — Control UI served by the gateway the wizard started in `fresh`
 
+## Shipping the Driver in the AOHP GSI (image integration)
+
+Since 2026-10-02 the `aosp_arm64_aohp` GSI ships **AOHP Driver + the OpenClaw Android
+app** and no longer the stock `AOHPAgentDriver` demo app. The AOSP-side pieces are small
+and the two prebuilt APKs are generated, not committed:
+
+| where | what |
+|---|---|
+| `AOSP/packages/apps/AOHPDriver/Android.bp` (copy in [aosp/AOHPDriver/](aosp/AOHPDriver/Android.bp)) | `android_app_import` of `AOHPDriver.apk`, `certificate: "platform"`, **`privileged: false`** → `system/app/AOHPDriver`. Soong re-signs the Gradle output with the tree's platform key, so no key is needed at Gradle time. |
+| `AOSP/packages/apps/OpenClawAndroid/Android.bp` (copy in [aosp/OpenClawAndroid/](aosp/OpenClawAndroid/Android.bp)) | `android_app_import` of `OpenClawAndroid.apk`, `preprocessed: true` (presigned; Soong validates alignment/uncompressed .so and copies, never re-signs), `privileged: false` → `system/app/OpenClawAndroid`. |
+| `AOSP/build/make/target/product/aosp_arm64_aohp.mk` | `PRODUCT_PACKAGES`: `AOHPDriver OpenClawAndroid aohp-containerd aohp-rootfs-debian aohp_cgroup_conf` (dropped `AOHPAgentDriver`, `privapp-permissions-aohp`); `PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST` has `system/app/AOHPDriver/{AOHPDriver.apk,oat/%}` and `system/app/OpenClawAndroid/{OpenClawAndroid.apk,oat/%,lib/%}`. |
+| `AOSP/build/make/target/product/gsi/Android.bp` | `aosp_arm64_aohp_system_image` deps list the two apps (Soong-defined image: every installed file must come from a listed module). |
+| `AOSP/frameworks/base/.../AohpUiTreeDumper.java` | the only package-specific framework reference: the ui-tree overlay filter now covers `org.aohp.driver` as well as `org.aohp.agentdriver`. |
+
+**Why system/app and not priv-app.** Everything the Driver needs is signature-level
+(`MANAGE_AOHP_VIRTUAL_DISPLAY`, `INJECT_EVENTS`, `WRITE_SECURE_SETTINGS`,
+`FORCE_STOP_PACKAGES`, `REAL_GET_TASKS`) and is granted by the platform signature,
+which also unlocks hidden-API access. A priv-app would additionally need a
+`privapp-permissions-*.xml` allowlist for every privileged permission (a missing entry
+aborts system_server at `systemReady` on userdebug) — nothing to gain. In sepolicy the
+platform-signed app lands in `platform_app`, which `aohp_agent_app.te` already allows to
+find the `aohp_*` services.
+
+**Why the OpenClaw app is not platform-signed.** It is a normal third-party app; signing it
+with the platform key would give it platform uid-level trust it does not need and would
+block later updates from the upstream release key. It is signed with a dedicated keystore
+kept outside every repo (`/aosp/keys/aohp-apps.jks`, alias `aohp-apps`, password in
+`/aosp/keys/aohp-apps.pass` mode 600) so a newer build signed with the same key can
+update it in place.
+
+Refreshing the prebuilts:
+
+```bash
+scripts/update-aosp-prebuilt.sh                    # Gradle assembleRelease (unsigned) -> AOSP/packages/apps/AOHPDriver/AOHPDriver.apk
+scripts/update-aosp-openclaw-app.sh <signed.apk>   # validates + copies the release-signed OpenClaw APK (build recipe in the script header)
+cd /aosp/aohp/AOSP && source build/envsetup.sh && lunch aosp_arm64_aohp-trunk_staging-userdebug && m -j10 systemimage
+```
+
+The Debian container template that goes into the same image is built by
+`/aosp/templates/build-debian-template.sh arm64` with `OPENCLAW=1` and now also bakes in
+the newest `aohp` CLI (with `secret`), `gh`/`age`, and the aohp-agents layer
+(`/opt/aohp-agents`, `aohp-bootstrap`/`aohp-secrets`/`aohp-update` on PATH), so the
+wizard's *Import from a git config repo* works in a fresh env.
+
 ## Known gaps
 
 v2:

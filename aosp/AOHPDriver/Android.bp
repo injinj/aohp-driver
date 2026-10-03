@@ -1,0 +1,28 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+// AOHP Driver (org.aohp.driver): replacement for the AOHPAgentDriver demo app.
+// Runtime / Harness / Terminal / Web UI plus the agent bridge (ws JSON-RPC on
+// 127.0.0.1:6666 for the aohp CLI inside the container).
+//
+// Prebuilt APK, NOT in git: build it from /aosp/aohp/aohp-app/aohp-driver with
+//   scripts/update-aosp-prebuilt.sh
+// which runs the Gradle release build and copies app-release-unsigned.apk here as
+// AOHPDriver.apk. Soong re-signs it with the platform key (certificate: "platform").
+//
+// Not privileged on purpose: every permission the Driver needs is signature-level
+// (MANAGE_AOHP_VIRTUAL_DISPLAY, INJECT_EVENTS, WRITE_SECURE_SETTINGS, FORCE_STOP_PACKAGES,
+// REAL_GET_TASKS) and granted by the platform signature alone, which also gives hidden-API
+// access (ServiceManager.getService). system/app therefore needs no privapp-permissions
+// allowlist (the stock app's privapp-permissions-aohp.xml is not carried for it).
+android_app_import {
+    name: "AOHPDriver",
+    apk: "AOHPDriver.apk",
+    certificate: "platform",
+    privileged: false,
+    optional_uses_libs: [
+        "androidx.window.extensions",
+        "androidx.window.sidecar",
+    ],
+}
