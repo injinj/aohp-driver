@@ -16,13 +16,20 @@ package {
 // REAL_GET_TASKS) and granted by the platform signature alone, which also gives hidden-API
 // access (ServiceManager.getService). system/app therefore needs no privapp-permissions
 // allowlist (the stock app's privapp-permissions-aohp.xml is not carried for it).
+// Keep the Driver out of the first-boot "stopped" state so BOOT_COMPLETED reaches it
+// (bridge + gateway autostart before the app was ever opened). Read by SystemConfig from
+// /system/etc/sysconfig/.
+prebuilt_etc {
+    name: "initial-package-stopped-states-aohp.xml",
+    src: "initial-package-stopped-states-aohp.xml",
+    sub_dir: "sysconfig",
+}
+
 android_app_import {
     name: "AOHPDriver",
     apk: "AOHPDriver.apk",
     certificate: "platform",
     privileged: false,
-    optional_uses_libs: [
-        "androidx.window.extensions",
-        "androidx.window.sidecar",
-    ],
+    // The Driver's manifest declares no <uses-library> tags (Compose-only, no AndroidX Window),
+    // and Soong's manifest_check requires the build-system list to match exactly.
 }

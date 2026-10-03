@@ -16,4 +16,10 @@ android_app_import {
     apk: "OpenClawAndroid.apk",
     preprocessed: true,
     privileged: false,
+    // Must mirror the manifest's uses-library-not-required tags (AndroidX Window), or
+    // manifest_check fails with "mismatch or misordering in the <uses-library> tags".
+    optional_uses_libs: [
+        "androidx.window.extensions",
+        "androidx.window.sidecar",
+    ],
 }

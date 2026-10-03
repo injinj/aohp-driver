@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AOHP Driver must not be scanned in the "stopped" state when the system image first sees it
+  (config_stopSystemPackagesByDefault is on for AOSP/GSI builds since Android 15): a stopped
+  package receives no BOOT_COMPLETED, so the agent bridge (127.0.0.1:6666) and the gateway
+  autostart would only begin working after the user opened the app once. With this entry the
+  bridge is up from the first boot, before any launch.
+
+  The OpenClaw Android app is deliberately left with the default (stopped until first launch):
+  nothing on the device depends on it before the user pairs it.
+-->
+<config>
+    <initial-package-state package="org.aohp.driver" stopped="false"/>
+</config>
