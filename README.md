@@ -198,6 +198,29 @@ kept outside every repo (`/aosp/keys/aohp-apps.jks`, alias `aohp-apps`, password
 `/aosp/keys/aohp-apps.pass` mode 600) so a newer build signed with the same key can
 update it in place.
 
+**First-boot stopped state.** AOSP/GSI builds scan every system package they meet for
+the first time as *stopped* (`config_stopSystemPackagesByDefault`), and a stopped package
+gets no `BOOT_COMPLETED` — so the bridge and the gateway autostart would only work after
+the user had opened the app once. `aosp/AOHPDriver/initial-package-stopped-states-aohp.xml`
+(`prebuilt_etc`, `/system/etc/sysconfig/`) exempts `org.aohp.driver`; the OpenClaw app keeps
+the default. Verified on the Pixel 6 by creating a fresh secondary user: Driver
+`stopped=false`, OpenClaw app `stopped=true`.
+
+**Verified first-boot flow (Pixel 6, 2026-10-02, image built from this tree):** launcher
+shows *AOHP Driver* + *OpenClaw*, no *AOHP Agent Driver*; Driver opens with the bridge
+already LISTENING on 127.0.0.1:6666 and the a11y keepalive connected, no permission
+prompts; wizard: create `oc` from `debian` (~1 min) → *Skip for now* → *Start gateway*
+(autostart on by default; HTTP 200 after ~50 s, first start runs `npm install`) → *Open
+Control UI*. OpenClaw app: *Set up manually* → host `127.0.0.1`, port `18789`,
+*Unencrypted*, no token → *Test connection* → "Pairing Gateway" shows
+`openclaw devices approve <id>` — run it in the Driver's **Terminal** tab (~20 s) → *Retry
+connection* → "Gateway paired" → *Continue* → "Approve node access" shows
+`openclaw nodes approve <requestId>` — Terminal tab again → *I have approved* → optional
+permissions → connected (green dot). Two approvals total, both done on the phone without
+adb. After `adb reboot` with no app opened: bridge up at boot, `autostart: oc: started
+openclaw-gateway`, `:18789` serving `/health` ≈ 60 s after boot, and the OpenClaw app
+shows *Online* / Nodes 1 online when opened.
+
 Refreshing the prebuilts:
 
 ```bash
