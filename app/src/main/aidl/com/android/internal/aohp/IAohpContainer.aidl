@@ -58,4 +58,13 @@ interface IAohpContainer {
 
     /** JSON: template, bind-mount hints, cgroup summary. */
     String diagnose(String containerName);
+
+    /**
+     * Unit control (systemd-subset units supervised by aohp-containerd; see aohp-driver
+     * docs/UNITS.md). op: list|status|start|stop|restart|reload|enable|disable|daemon-reload|
+     * log|cat|timers|env-start|env-stop|reset-failed|is-active; jsonArgs e.g. {"unit":"x","now":true,
+     * "tailBytes":4096}. Returns the daemon's JSON result, or {"error":true,"message":"..."}.
+     * Generic on purpose so new ops need no AIDL change; appended last to keep transaction codes.
+     */
+    String unitControl(String containerName, String op, String jsonArgs);
 }

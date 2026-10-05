@@ -83,7 +83,7 @@ fun HarnessScreen(modifier: Modifier = Modifier, onGoToTab: (Tab) -> Unit, onSet
             if (st.servicesError == null && st.services.none { it.serviceId == GATEWAY_SERVICE_ID })
                 SetupCard("OpenClaw is not set up in ‘" + st.env + "’", "No openclaw-gateway service has been started here yet. The wizard adds a provider key (or imports a config repo), starts the gateway and can enable autostart on boot.", onSetup)
             GatewayCard(st, vm, onGoToTab, onBootstrap = { showBootstrap = true })
-            ServicesCard(st, vm)
+            if (st.units != null) UnitsCard(st, vm) else ServicesCard(st, vm)
             LogCard(st, vm)
             SecretsCard(st, vm)
             Spacer(Modifier.height(24.dp))
@@ -160,6 +160,82 @@ private fun ServicesCard(st: HarnessState, vm: HarnessViewModel) {
                     }
                     TextButton(onClick = { vm.setLogService(s.serviceId) }) { Text("Log") }
                     if (s.alive && s.serviceId != GATEWAY_SERVICE_ID) TextButton(onClick = { vm.stopOther(s.serviceId) }) { Text("Stop") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Units (docs/UNITS.md): the containerd-supervised services and timers of this env. Replaces the
+ * plain Services card on images whose daemon has unitControl; transient (svc-start) services show
+ * up here too, with loadState "transient".
+ */
+@Composable
+private fun UnitsCard(st: HarnessState, vm: HarnessViewModel) {
+    val units = st.units ?: return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Units", style = MaterialTheme.typography.titleMedium)
+                Row {
+                    TextButton(onClick = { vm.envUnitsAction("daemon-reload") }) { Text("Reload") }
+                    TextButton(onClick = { vm.envUnitsAction("env-start") }) { Text("Start env") }
+                    TextButton(onClick = { vm.envUnitsAction("env-stop") }) { Text("Stop env") }
+                }
+            }
+            st.unitsError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            st.unitWarnings.take(3).forEach { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
+            if (units.isEmpty()) Text("no units — /etc/aohp/system is empty in this env", style = MaterialTheme.typography.bodyMedium)
+            val now = System.currentTimeMillis() / 1000
+            units.sortedWith(compareBy({ it.isTimer }, { it.name })).forEach { u ->
+                val (label, color) = when {
+                    u.loadState == "error" -> "error" to MaterialTheme.colorScheme.error
+                    u.active == "active" -> u.active to Color(0xFF2E7D32)
+                    u.active == "failed" -> u.active to MaterialTheme.colorScheme.error
+                    u.active == "activating" || u.active == "deactivating" -> u.active to Color(0xFFF9A825)
+                    else -> u.active to MaterialTheme.colorScheme.outline
+                }
+                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(u.name + (if (u.enabled) "" else "  (disabled)"), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyLarge)
+                            if (u.description.isNotEmpty()) Text(u.description, style = MaterialTheme.typography.bodySmall)
+                            val detail = buildString {
+                                append(u.sub)
+                                if (u.isTimer) {
+                                    if (u.nextElapse > 0) append(" · next in " + fmtUptime(maxOf(0L, u.nextElapse - now)))
+                                    if (u.lastTrigger > 0) append(" · last " + fmtUptime(maxOf(0L, now - u.lastTrigger)) + " ago")
+                                    u.timerUnit?.let { append(" · → " + it) }
+                                } else {
+                                    if (u.mainPid > 0) append(" · pid " + u.mainPid)
+                                    if (u.active == "active") append(" · up " + fmtUptime(u.uptimeSec))
+                                    if (u.sub == "auto-restart") append(" · retry in " + u.restartInSec.toInt() + "s")
+                                    if (u.nRestarts > 0) append(" · " + u.nRestarts + " restart" + (if (u.nRestarts > 1) "s" else ""))
+                                    if (u.result != "success") append(" · " + u.result + (if (u.exitCode >= 0 && u.result == "exit-code") " " + u.exitCode else "") + (if (u.exitSignalName.isNotEmpty()) " SIG" + u.exitSignalName else ""))
+                                    if (u.restart != "no") append(" · Restart=" + u.restart)
+                                }
+                                if (u.loadState == "error") append(" · " + u.loadError)
+                                if (u.loadState == "transient") append(" · transient")
+                            }
+                            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        StatusPill(label, color)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        val busy = st.busy != null || u.loadState == "error"
+                        if (u.active == "active" || u.active == "activating") {
+                            TextButton(enabled = !busy, onClick = { vm.unitAction("stop", u.name) }) { Text("Stop") }
+                            TextButton(enabled = !busy, onClick = { vm.unitAction("restart", u.name) }) { Text("Restart") }
+                        } else {
+                            TextButton(enabled = !busy, onClick = { vm.unitAction("start", u.name) }) { Text("Start") }
+                        }
+                        if (u.loadState != "transient") {
+                            if (u.enabled) TextButton(enabled = !busy, onClick = { vm.unitAction("disable", u.name) }) { Text("Disable") }
+                            else TextButton(enabled = !busy, onClick = { vm.unitAction("enable", u.name) }) { Text("Enable") }
+                        }
+                        if (!u.isTimer) TextButton(onClick = { vm.setLogService(u.baseName) }) { Text("Log") }
+                    }
                 }
             }
         }

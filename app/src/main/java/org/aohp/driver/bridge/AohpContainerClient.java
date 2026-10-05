@@ -236,6 +236,27 @@ public final class AohpContainerClient {
         }
     }
 
+    /** Units (docs/UNITS.md): the daemon's JSON, or {"error":true,"message":..} (also for binder failures / old images). */
+    public String unitControl(String containerName, String op, String jsonArgs) {
+        try {
+            IAohpContainer svc = getService();
+            if (svc == null) return unitErr("aohp_container service not available");
+            String s = svc.unitControl(containerName, op, jsonArgs);
+            return s != null ? s : unitErr("empty response");
+        } catch (RemoteException e) {
+            Log.e(TAG, "unitControl failed", e);
+            return unitErr("unitControl not available on this image: " + e);
+        } catch (RuntimeException e) {
+            // AbstractMethodError-like failures surface as UnsupportedOperationException on old images
+            Log.e(TAG, "unitControl failed", e);
+            return unitErr("unitControl not available on this image: " + e);
+        }
+    }
+
+    private static String unitErr(String msg) {
+        return "{\"error\":true,\"message\":" + org.json.JSONObject.quote(msg) + "}";
+    }
+
     public CgroupUsage getUsage(String containerName) {
         try {
             IAohpContainer svc = getService();

@@ -202,11 +202,13 @@ class BridgeService : Service() {
     }
 
     /**
-     * Boot path: wait for aohp_container (containerd) to answer, then, in every env flagged
-     * autostart, start again every service the ServiceRegistry recorded for it (anything
-     * started through the Harness tab or `aohp sandbox svc-start`, e.g. a net-watchdog), in
-     * their recorded order with openclaw-gateway moved last so network/VPN helpers are up
-     * first. An env with nothing recorded falls back to the old behaviour: just the gateway.
+     * Boot path: wait for aohp_container (containerd) to answer, then, for every env flagged
+     * autostart, "start the env": containerd's env-start runs the env's enabled units
+     * (/etc/aohp/system/aohp.target.wants, docs/UNITS.md) in dependency order, supervised
+     * (Restart=, timers). Fallback for images without unitControl or envs without any unit
+     * file: the 0.3.0 behaviour — replay every service the ServiceRegistry recorded (anything
+     * started through the Harness tab or `aohp sandbox svc-start`) in order with the gateway
+     * last, or just the gateway when nothing was recorded.
      * The gateway's launcher wrapper reads ANTHROPIC_API_KEY through this bridge, so the ws
      * server must be up first (it is: called after startServer).
      */
@@ -235,6 +237,18 @@ class BridgeService : Service() {
         }
         for (env in envs.sorted()) {
             if (env !in containers) { log.append("$env: no such env\n"); continue }
+            // units first (docs/UNITS.md)
+            val units = if (app.containers.unitsSupported == false) null else app.containers.listUnits(env).getOrNull()
+            if (units != null && units.any { it.loadState != "transient" }) {
+                val r = app.containers.unitEnvOp(env, "env-start")
+                log.append(r.fold({ o ->
+                    fun arr(k: String) = o.optJSONArray(k)?.let { a -> (0 until a.length()).map { i -> a.optString(i) } } ?: emptyList()
+                    "$env: env-start: ${arr("started").size} unit(s) started" + (arr("failed").takeIf { it.isNotEmpty() }?.let { ", failed: " + it.joinToString() } ?: "") + "\n"
+                }, { "$env: env-start failed: ${it.message}\n" }))
+                if (r.isSuccess) continue
+            } else if (units != null) {
+                log.append("$env: no unit files, registry fallback\n")
+            }
             val recorded = app.services.list(env)
             val wanted = if (recorded.isEmpty()) listOf(ServiceRegistry.Entry(GATEWAY_SERVICE_ID, GATEWAY_COMMAND))
                          else recorded.filter { it.serviceId != GATEWAY_SERVICE_ID } + recorded.filter { it.serviceId == GATEWAY_SERVICE_ID }

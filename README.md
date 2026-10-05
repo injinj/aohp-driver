@@ -86,6 +86,23 @@ AohpDriver`, `autostart:`) and shown on the bridge card. The gateway's
 launcher reads the provider key through the bridge, so the bridge comes up
 first.
 
+## Units (0.4.0) — supervised services and timers per env
+
+With a ROM whose aohp-containerd has the `UNIT` ops (LineageOS oriole build-5 / dodge build-3,
+2026-10-05) the Harness tab shows a **Units** card instead of the plain Services list: every
+`/etc/aohp/system/*.service|*.timer` of the env (systemd subset — `Restart=`, `After=`/`Requires=`,
+`ExecStartPre`, `EnvironmentFile=`, timers with `OnBootSec/OnUnitActiveSec/OnCalendar`) with state
+badge, sub-state, pid/uptime or next elapse, restart count, and start/stop/restart/enable/disable/
+log buttons, plus *Reload* (daemon-reload), *Start env*, *Stop env*. **Autostart at boot = env-start**:
+containerd starts the env's enabled units in dependency order; envs without unit files fall back to
+the 0.3.0 ServiceRegistry replay. The Gateway card's buttons drive `openclaw-gateway.service` when the
+template ships it (the aohp-agents templates do, enabled by default).
+
+Bridge: `sandbox.unit {name, op, unit?, now?, tailBytes?}` (+ `sandbox.unit_<op>` aliases) → the
+`aohp unit <env> …` / `aohp timer <env> list` CLI and the container-side `systemctl`/`journalctl`
+shims. Spec: [docs/UNITS.md](docs/UNITS.md). On older images `IAohpContainer.unitControl` is missing;
+the app detects that once and keeps the 0.3.0 behaviour.
+
 ## First-run wizard (Harness -> “Set up OpenClaw…”)
 
 1. **Environment** — name (default `oc`), template picker; existing name =

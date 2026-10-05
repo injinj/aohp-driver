@@ -39,6 +39,51 @@ data class Diagnose(
     val raw: String,
 )
 
+/** One unit as reported by containerd's UNIT op (aohp-driver docs/UNITS.md). */
+data class UnitInfo(
+    val name: String,
+    val type: String,            // service | timer
+    val serviceType: String,     // simple | oneshot
+    val description: String,
+    val loadState: String,       // loaded | error | transient
+    val loadError: String,
+    val enabled: Boolean,
+    val active: String,          // active | activating | deactivating | inactive | failed
+    val sub: String,
+    val result: String,
+    val mainPid: Int,
+    val exitCode: Int,
+    val exitSignalName: String,
+    val nRestarts: Int,
+    val uptimeSec: Long,
+    val execStart: String,
+    val restart: String,
+    val restartInSec: Double,
+    val timerUnit: String?,
+    val nextElapse: Long,
+    val lastTrigger: Long,
+    val raw: JSONObject,
+) {
+    val isTimer get() = type == "timer"
+    val baseName get() = name.removeSuffix(".service").removeSuffix(".timer")
+    companion object {
+        fun from(o: JSONObject): UnitInfo {
+            val t = o.optJSONObject("timer")
+            return UnitInfo(
+                o.optString("name"), o.optString("type", "service"), o.optString("serviceType", "simple"),
+                o.optString("description"), o.optString("loadState", "loaded"), o.optString("loadError"),
+                o.optBoolean("enabled"), o.optString("active", "inactive"), o.optString("sub", "dead"),
+                o.optString("result", "success"), o.optInt("mainPid"), o.optInt("exitCode", -1),
+                o.optString("exitSignalName"), o.optInt("nRestarts"), o.optLong("uptimeSec"),
+                o.optString("execStart"), o.optString("restart", "no"), o.optDouble("restartInSec", 0.0),
+                t?.optString("unit"), t?.optLong("nextElapse") ?: 0L, t?.optLong("lastTrigger") ?: 0L, o)
+        }
+    }
+}
+
+/** Result of a UNIT op: the daemon's JSON (units list or one unit) or an error message. */
+class UnitOpException(msg: String) : RuntimeException(msg)
+
 data class Usage(
     val cgroupEnabled: Boolean,
     val cgroupPath: String,
@@ -132,6 +177,41 @@ class ContainerService {
         Diagnose(o.optString("container", name), o.optString("template", ""), o.optBoolean("rootfsExists", false),
             o.optBoolean("npmCacheHostDir", false), o.optBoolean("openclawDevHostDir", false), cg, raw)
     }
+
+        // ---- units (IAohpContainer.unitControl, added with containerd units; older images throw) ----
+
+    /** Raw unit op; throws UnitOpException on a daemon error or when the image has no unitControl. */
+    suspend fun unitControl(env: String, op: String, args: JSONObject = JSONObject()): Result<JSONObject> = io {
+        val s = try {
+            it.unitControl(env, op, args.toString())
+        } catch (e: Throwable) {
+            // android.os.RemoteException / UnsupportedOperationException on an image without the method
+            throw UnitOpException("unitControl not available on this image (" + e.javaClass.simpleName + ")")
+        }
+        val o = JSONObject(s ?: "{}")
+        if (o.optBoolean("error", false)) throw UnitOpException(o.optString("message", "unit op failed"))
+        o
+    }
+
+    /** Whether the daemon/framework support units at all (cached after the first answer). */
+    @Volatile var unitsSupported: Boolean? = null
+
+    suspend fun listUnits(env: String): Result<List<UnitInfo>> = unitControl(env, "list").map { o ->
+        unitsSupported = true
+        parseUnits(o.optJSONArray("units"))
+    }.onFailure { if (it is UnitOpException && it.message?.contains("not available") == true) unitsSupported = false }
+
+    suspend fun unitOp(env: String, op: String, unit: String, now: Boolean = false): Result<UnitInfo> =
+        unitControl(env, op, JSONObject().put("unit", unit).put("now", now)).map { UnitInfo.from(it) }
+
+    suspend fun unitLog(env: String, unit: String, tailBytes: Int): Result<String> =
+        unitControl(env, "log", JSONObject().put("unit", unit).put("tailBytes", tailBytes)).map { it.optString("log") }
+
+    /** env-start / env-stop / daemon-reload: returns the full unit list plus started/failed arrays. */
+    suspend fun unitEnvOp(env: String, op: String): Result<JSONObject> = unitControl(env, op)
+
+    fun parseUnits(arr: JSONArray?): List<UnitInfo> =
+        if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { UnitInfo.from(it) } }
 
     /** Template names = *.tar.gz in the (world-readable) system template dir. */
     fun listTemplates(): List<String> =

@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.aohp.driver.DriverApp
 import org.aohp.driver.binder.ServiceInfo
+import org.aohp.driver.binder.UnitInfo
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -38,6 +39,10 @@ data class HarnessState(
     val env: String? = null,
     val services: List<ServiceInfo> = emptyList(),
     val servicesError: String? = null,
+    /** containerd units (docs/UNITS.md); null = image without unitControl (pre-units daemon). */
+    val units: List<UnitInfo>? = null,
+    val unitsError: String? = null,
+    val unitWarnings: List<String> = emptyList(),
     val probe: HttpProbe? = null,
     val log: String = "",
     val logAuto: Boolean = true,
@@ -70,13 +75,48 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val env = _state.value.env ?: return@launch
         val s = svc.listServices(env)
         val p = probeHttp()
-        _state.update { it.copy(services = s.getOrDefault(it.services), servicesError = s.exceptionOrNull()?.message, probe = p) }
+        // units: one "list" op; on an image without unitControl the first failure pins unitsSupported=false
+        val u = if (svc.unitsSupported == false) null else svc.unitControl(env, "list")
+        _state.update {
+            it.copy(services = s.getOrDefault(it.services), servicesError = s.exceptionOrNull()?.message, probe = p,
+                units = when {
+                    u == null -> null
+                    u.isSuccess -> svc.parseUnits(u.getOrThrow().optJSONArray("units"))
+                    else -> it.units
+                },
+                unitsError = u?.exceptionOrNull()?.message,
+                unitWarnings = u?.getOrNull()?.optJSONArray("warnings")?.let { a -> (0 until a.length()).map { i -> a.optString(i) } } ?: it.unitWarnings)
+        }
+        if (u?.isSuccess == true) svc.unitsSupported = true
+        else if (u != null && u.exceptionOrNull()?.message?.contains("not available") == true) svc.unitsSupported = false
         if (_state.value.logAuto) refreshLog()
     }
 
     fun refreshLog() = viewModelScope.launch {
         val env = _state.value.env ?: return@launch
-        svc.serviceLog(env, _state.value.logServiceId, 16 * 1024).onSuccess { l -> _state.update { it.copy(log = l) } }
+        // unit logs and legacy service logs share one id space (serviceLog reads the unit log first)
+        svc.serviceLog(env, _state.value.logServiceId.removeSuffix(".service").removeSuffix(".timer"), 16 * 1024).onSuccess { l -> _state.update { it.copy(log = l) } }
+    }
+
+    /** The gateway as a unit (template ships openclaw-gateway.service), null on old images / transient-only envs. */
+    fun gatewayUnit(): UnitInfo? = _state.value.units?.firstOrNull { it.name == "$GATEWAY_SERVICE_ID.service" && it.loadState != "transient" }
+
+    fun unitAction(op: String, unit: String, now: Boolean = false) = action(opLabel(op, unit)) {
+        svc.unitOp(env(), op, unit, now).getOrThrow().let { u -> "$op ${u.name}: ${u.active} (${u.sub})" + (if (u.result != "success") " · ${u.result}" else "") }
+    }
+    fun envUnitsAction(op: String) = action(opLabel(op, "env")) {
+        val o = svc.unitEnvOp(env(), op).getOrThrow()
+        fun arr(k: String) = o.optJSONArray(k)?.let { a -> (0 until a.length()).map { i -> a.optString(i) } } ?: emptyList()
+        when (op) {
+            "env-start" -> "started ${arr("started").size} unit(s)" + (arr("failed").takeIf { it.isNotEmpty() }?.let { ", failed: " + it.joinToString() } ?: "")
+            "env-stop" -> "stopped ${arr("stopped").size} unit(s)"
+            else -> "reloaded ${o.optJSONArray("units")?.length() ?: 0} unit(s)" + (arr("warnings").takeIf { it.isNotEmpty() }?.let { ", ${it.size} warning(s)" } ?: "")
+        }
+    }
+    private fun opLabel(op: String, unit: String) = when (op) {
+        "start" -> "Starting $unit…"; "stop" -> "Stopping $unit…"; "restart" -> "Restarting $unit…"
+        "enable" -> "Enabling $unit…"; "disable" -> "Disabling $unit…"; "daemon-reload" -> "Reloading units…"
+        "env-start" -> "Starting env units…"; "env-stop" -> "Stopping env units…"; else -> "$op $unit…"
     }
 
     fun setLogAuto(v: Boolean) = _state.update { it.copy(logAuto = v) }
@@ -109,16 +149,22 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // On a units-capable image startService(openclaw-gateway) runs the template's supervised
+    // openclaw-gateway.service (containerd maps the id onto the unit file; the command is ignored),
+    // so these keep working on old and new images; the unit path is preferred when the list shows it.
     fun start() = action("Starting gateway…") {
+        gatewayUnit()?.let { u -> svc.unitOp(env(), "start", u.name).getOrThrow().let { return@action "Started ${it.name}: ${it.active} (${it.sub})" } }
         val pid = svc.startService(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND).getOrThrow()
         if (pid > 0) { registry.record(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND); "Started $GATEWAY_SERVICE_ID (pid $pid)" }
         else throw RuntimeException("startService returned $pid")
     }
     fun stop() = action("Stopping gateway…") {
+        gatewayUnit()?.let { u -> svc.unitOp(env(), "stop", u.name).getOrThrow().let { return@action "Stopped ${it.name}" } }
         if (svc.stopService(env(), GATEWAY_SERVICE_ID).getOrThrow()) { registry.forget(env(), GATEWAY_SERVICE_ID); "Stopped $GATEWAY_SERVICE_ID" }
         else throw RuntimeException("stopService returned false")
     }
     fun restart() = action("Restarting gateway…") {
+        gatewayUnit()?.let { u -> svc.unitOp(env(), "restart", u.name).getOrThrow().let { return@action "Restarted ${it.name}: ${it.active} (${it.sub})" } }
         svc.stopService(env(), GATEWAY_SERVICE_ID)
         delay(1500)
         val pid = svc.startService(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND).getOrThrow()

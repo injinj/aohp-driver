@@ -235,6 +235,8 @@ public final class JsonCommandHandler {
                 return completedJson(() -> sandboxSvcLog(p));
             case "sandbox.diag":
                 return completedJson(() -> sandboxDiag(p));
+            case "sandbox.unit":
+                return completedJson(() -> sandboxUnit(p, p.optString("op", "")));
             case "secret.get":
                 return completedJson(() -> secretGet(p));
             case "secret.set":
@@ -244,6 +246,11 @@ public final class JsonCommandHandler {
             case "secret.list":
                 return completedJson(this::secretList);
             default:
+                // sandbox.unit_<op>: aliases of sandbox.unit {op} (sandbox.unit_list, sandbox.unit_start, ...)
+                if (method.startsWith("sandbox.unit_")) {
+                    final String op = method.substring("sandbox.unit_".length()).replace('_', '-');
+                    return completedJson(() -> sandboxUnit(p, op));
+                }
                 return CompletableFuture.completedFuture(errObj("unknown_method", method));
         }
     }
@@ -1733,6 +1740,33 @@ public final class JsonCommandHandler {
         if (ok) org.aohp.driver.ServiceRegistry.get(mContext).forget(p.getString("name"), p.getString("serviceId"));
         JSONObject o = new JSONObject();
         o.put("ok", ok);
+        return o;
+    }
+
+    /**
+     * sandbox.unit {name, op, unit?, now?, tailBytes?} -> containerd UNIT op result (docs/UNITS.md).
+     * Every key except name/op is forwarded as the op's JSON args. Daemon errors come back as
+     * {"error":true,"message"} from the system service and are mapped to a JSON-RPC error here.
+     */
+    private JSONObject sandboxUnit(JSONObject p, String op) throws JSONException {
+        String name = p.getString("name");
+        if (op.isEmpty()) throw new IllegalArgumentException("missing op");
+        JSONObject args = new JSONObject();
+        for (java.util.Iterator<String> it = p.keys(); it.hasNext(); ) {
+            String k = it.next();
+            if (k.equals("name") || k.equals("op")) continue;
+            args.put(k, p.get(k));
+        }
+        String j = mContainer.unitControl(name, op, args.toString());
+        JSONObject o;
+        try {
+            o = new JSONObject(j == null ? "{}" : j);
+        } catch (JSONException e) {
+            throw new IllegalStateException("bad unit response: " + j);
+        }
+        if (o.optBoolean("error", false)) {
+            throw new IllegalStateException(o.optString("message", "unit op failed"));
+        }
         return o;
     }
 

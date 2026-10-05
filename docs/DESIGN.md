@@ -275,6 +275,24 @@ Reboot test 2026-10-02 (OnePlus 13, stock app disabled, no app opened):
 `/health {"ok":true,"status":"live"}`, `ANTHROPIC_API_KEY` present in the
 gateway's environment (fetched through the bridge).
 
+### Units (0.4.0)
+
+See [UNITS.md](UNITS.md) for the full design. Summary of what changed in the app:
+
+- `IAohpContainer.unitControl(env, op, jsonArgs)` — one generic Binder method (appended last in
+  the AIDL, so the compiled-in copy stays wire-compatible with 0.3.0 images; on those the call
+  throws and `ContainerService.unitsSupported` is pinned to `false`).
+- `ContainerService.listUnits/unitOp/unitLog/unitEnvOp`, `UnitInfo` (parsed UnitJson).
+- Harness: `UnitsCard` replaces `ServicesCard` when the daemon reports units; gateway
+  start/stop/restart go through the unit when `openclaw-gateway.service` exists (containerd also
+  maps the legacy `startService("openclaw-gateway")` onto that unit file, so nothing else had to
+  change).
+- Boot: `autostartGateways()` first tries `env-start` per env (units in dependency order, supervised),
+  and only falls back to the ServiceRegistry replay when the env has no unit files or the image has
+  no `unitControl`.
+- Bridge: `sandbox.unit` + `sandbox.unit_<op>` aliases forward every param except `name`/`op` as the
+  op's JSON args; daemon `{"error":true,"message"}` becomes a JSON-RPC error.
+
 ### Secret migration
 
 `LegacySecretImport` is a Java-WebSocket *client*: connects to
