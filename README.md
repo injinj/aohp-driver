@@ -229,6 +229,13 @@ scripts/update-aosp-openclaw-app.sh <signed.apk>   # validates + copies the rele
 cd /aosp/aohp/AOSP && source build/envsetup.sh && lunch aosp_arm64_aohp-trunk_staging-userdebug && m -j10 systemimage
 ```
 
+Releases: pushing a tag `v<versionName>` (e.g. `v0.2.0`, matching `versionName` in
+`app/build.gradle.kts`) runs `.github/workflows/release.yml`, which builds the same unsigned
+`assembleRelease` APK on GitHub Actions and attaches `AOHPDriver.apk` + `AOHPDriver.apk.sha256`
+to https://github.com/injinj/aohp-driver/releases. The LineageOS + AOHP tree fetches that asset
+with `vendor/aohp/fetch-prebuilts.sh` (pinned tag + sha256) instead of copying it from a
+developer machine; `ci.yml` just assembles on every push/PR.
+
 The Debian container template that goes into the same image is built by
 `/aosp/templates/build-debian-template.sh arm64` with `OPENCLAW=1` and now also bakes in
 the newest `aohp` CLI (with `secret`), `gh`/`age`, and the aohp-agents layer

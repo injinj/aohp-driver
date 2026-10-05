@@ -1,0 +1,72 @@
+name: release
+
+# Builds the unsigned release APK (exactly what scripts/update-aosp-prebuilt.sh copies into an
+# AOSP/Lineage tree as packages/apps/AOHPDriver/AOHPDriver.apk -- Soong platform-signs it at
+# image build time) and attaches it to a GitHub release for the tag.
+#
+# Trigger: push a tag v<versionName> (the versionName in app/build.gradle.kts), or run manually.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'        # AGP 8.5.1 / Gradle 8.7
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+          accept-android-sdk-licenses: true
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build unsigned release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release-unsigned.apk dist/AOHPDriver.apk
+          cd dist && sha256sum AOHPDriver.apk > AOHPDriver.apk.sha256 && cat AOHPDriver.apk.sha256
+
+      - name: Badging (package / version)
+        run: |
+          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/36.0.0/aapt)
+          "$AAPT" dump badging dist/AOHPDriver.apk | grep -E '^package:|uses-library' || true
+          VN=$("$AAPT" dump badging dist/AOHPDriver.apk | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          echo "versionName=$VN"
+          case "$GITHUB_REF_NAME" in
+            v*) [ "v$VN" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != versionName $VN" >&2; exit 1; } ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AOHPDriver-unsigned
+          path: dist/*
+
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/AOHPDriver.apk
+            dist/AOHPDriver.apk.sha256
+          body: |
+            AOHP Driver ${{ github.ref_name }} — unsigned release APK (`assembleRelease`, not minified), built by GitHub Actions
+            from this tag. It is the prebuilt consumed by `packages/apps/AOHPDriver/Android.bp` (`android_app_import`,
+            `certificate: "platform"`): Soong re-signs it with the ROM's platform key, so it is **not installable as-is** on
+            a device — ship it in a system image (LineageOS 23.2 + AOHP: https://github.com/injinj/aohp-lineage) or sign it
+            with a tree's platform key (`scripts/sign-platform.sh`).
+
+            Verify: `sha256sum -c AOHPDriver.apk.sha256`
