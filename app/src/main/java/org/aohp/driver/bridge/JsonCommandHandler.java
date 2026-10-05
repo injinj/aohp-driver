@@ -1659,6 +1659,7 @@ public final class JsonCommandHandler {
 
     private JSONObject sandboxDestroy(JSONObject p) throws JSONException {
         ShellExecutor.CommandResult r = mContainer.destroyContainer(p.getString("name"));
+        org.aohp.driver.ServiceRegistry.get(mContext).forgetEnv(p.getString("name"));
         return crToJson(r);
     }
 
@@ -1718,6 +1719,10 @@ public final class JsonCommandHandler {
     private JSONObject sandboxSvcStart(JSONObject p) throws JSONException {
         long id = mContainer.startService(
                 p.getString("name"), p.getString("serviceId"), p.getString("command"));
+        if (id > 0) {
+            org.aohp.driver.ServiceRegistry.get(mContext)
+                    .record(p.getString("name"), p.getString("serviceId"), p.getString("command"));
+        }
         JSONObject o = new JSONObject();
         o.put("pidOrHandle", id);
         return o;
@@ -1725,6 +1730,7 @@ public final class JsonCommandHandler {
 
     private JSONObject sandboxSvcStop(JSONObject p) throws JSONException {
         boolean ok = mContainer.stopService(p.getString("name"), p.getString("serviceId"));
+        if (ok) org.aohp.driver.ServiceRegistry.get(mContext).forget(p.getString("name"), p.getString("serviceId"));
         JSONObject o = new JSONObject();
         o.put("ok", ok);
         return o;

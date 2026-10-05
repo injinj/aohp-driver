@@ -72,11 +72,19 @@ a11y keepalive from secure settings), then
 
 `BOOT_COMPLETED` -> `BootReceiver` -> `BridgeService.start(autostart=true)`
 -> ws server up -> poll `aohp_container.listContainers` (up to 3 min) ->
-for every env with the **Autostart** switch on: `startService(env,
-"openclaw-gateway", "openclaw gateway")` unless already alive. The result
-is logged (`logcat -s AohpDriver`, `autostart:`) and shown on the bridge
-card. The gateway's launcher reads the provider key through the bridge, so
-the order matters.
+for every env with the **Autostart** switch on: start again **every service
+recorded for that env** (since 0.3.0; `ServiceRegistry`, SharedPreferences
+`services`, one `{serviceId, command}` list per env, written whenever a
+service is started/stopped through the Harness tab, the setup wizard or
+`aohp sandbox svc-start/svc-stop` over the bridge; cleared on sandbox
+destroy). Order = first-started first, with `openclaw-gateway` moved last so
+network helpers (e.g. a `net-watchdog` that brings up wg0 + sshd) are up
+before the gateway; a service already alive is skipped. An env with nothing
+recorded falls back to the old behaviour, `startService(env,
+"openclaw-gateway", "openclaw gateway")`. The result is logged (`logcat -s
+AohpDriver`, `autostart:`) and shown on the bridge card. The gateway's
+launcher reads the provider key through the bridge, so the bridge comes up
+first.
 
 ## First-run wizard (Harness -> “Set up OpenClaw…”)
 

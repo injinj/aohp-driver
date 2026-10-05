@@ -130,7 +130,8 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun destroy(name: String) = action("Destroying $name…") {
-        if (svc.destroyContainer(name).getOrThrow()) "Destroyed $name" else throw RuntimeException("destroyContainer returned false")
+        if (svc.destroyContainer(name).getOrThrow()) { (getApplication<DriverApp>()).services.forgetEnv(name); "Destroyed $name" }
+        else throw RuntimeException("destroyContainer returned false")
     }
 
     private fun action(label: String, block: suspend () -> String) = viewModelScope.launch {

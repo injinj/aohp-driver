@@ -236,6 +236,7 @@ exec /usr/local/bin/openclaw.real "${'$'}@"
         val running = svc.listServices(env).getOrNull()?.firstOrNull { it.serviceId == GATEWAY_SERVICE_ID && it.alive }
         val pid = running?.pid?.toLong() ?: svc.startService(env, GATEWAY_SERVICE_ID, GATEWAY_COMMAND).getOrThrow()
         if (pid <= 0) throw RuntimeException("startService returned ${pid}")
+        (getApplication<DriverApp>()).services.record(env, GATEWAY_SERVICE_ID, GATEWAY_COMMAND)
         appendLog((if (running != null) "gateway already running pid " else "started gateway pid ") + pid + ", autostart=" + _state.value.autostart)
         _state.update { it.copy(gatewayPid = pid) }
         // First start in a fresh env can take minutes: openclaw runs `npm install` for plugin deps

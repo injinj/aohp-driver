@@ -52,6 +52,7 @@ data class HarnessState(
 
 class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     private val svc = (app as DriverApp).containers
+    private val registry = (app as DriverApp).services
     private val settings = (app as DriverApp).settings
     private val _state = MutableStateFlow(HarnessState())
     val state: StateFlow<HarnessState> = _state.asStateFlow()
@@ -110,19 +111,23 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     fun start() = action("Starting gateway…") {
         val pid = svc.startService(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND).getOrThrow()
-        if (pid > 0) "Started $GATEWAY_SERVICE_ID (pid $pid)" else throw RuntimeException("startService returned $pid")
+        if (pid > 0) { registry.record(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND); "Started $GATEWAY_SERVICE_ID (pid $pid)" }
+        else throw RuntimeException("startService returned $pid")
     }
     fun stop() = action("Stopping gateway…") {
-        if (svc.stopService(env(), GATEWAY_SERVICE_ID).getOrThrow()) "Stopped $GATEWAY_SERVICE_ID" else throw RuntimeException("stopService returned false")
+        if (svc.stopService(env(), GATEWAY_SERVICE_ID).getOrThrow()) { registry.forget(env(), GATEWAY_SERVICE_ID); "Stopped $GATEWAY_SERVICE_ID" }
+        else throw RuntimeException("stopService returned false")
     }
     fun restart() = action("Restarting gateway…") {
         svc.stopService(env(), GATEWAY_SERVICE_ID)
         delay(1500)
         val pid = svc.startService(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND).getOrThrow()
-        if (pid > 0) "Restarted (pid $pid)" else throw RuntimeException("startService returned $pid")
+        if (pid > 0) { registry.record(env(), GATEWAY_SERVICE_ID, GATEWAY_COMMAND); "Restarted (pid $pid)" }
+        else throw RuntimeException("startService returned $pid")
     }
     fun stopOther(id: String) = action("Stopping $id…") {
-        if (svc.stopService(env(), id).getOrThrow()) "Stopped $id" else throw RuntimeException("stopService returned false")
+        if (svc.stopService(env(), id).getOrThrow()) { registry.forget(env(), id); "Stopped $id" }
+        else throw RuntimeException("stopService returned false")
     }
 
     fun loadSecrets() = viewModelScope.launch {

@@ -256,8 +256,17 @@ flags, last autostart log) consumed by the Runtime card.
 `RECEIVE_BOOT_COMPLETED` -> `BootReceiver` -> `BridgeService.start(autostart=true)`:
 ws server first (the gateway launcher needs `secret.get`), then poll
 `listContainers()` every 2 s for up to 3 min, then for each env in
-`autostart_envs` (DataStore string set, Runtime card switch) start
-`openclaw-gateway` unless `listServices` says it is alive.
+`autostart_envs` (DataStore string set, Runtime card switch) replay the
+env's **ServiceRegistry** (0.3.0): every `{serviceId, command}` that was
+started through HarnessViewModel / SetupViewModel / the bridge's
+`sandbox.svc_start` and not stopped since (`sandbox.svc_stop`, Harness
+Stop, sandbox destroy remove entries). SharedPreferences file `services`,
+key `env:<name>`, JSON array in first-start order; the Java bridge needs a
+synchronous store, hence not DataStore. Start order: non-gateway services
+first (500 ms apart), `openclaw-gateway` last; anything `listServices`
+reports alive is skipped. Empty registry -> just `openclaw-gateway` with
+`openclaw gateway` (pre-0.3.0 behaviour). containerd keeps no service
+definitions across reboots, so this registry is the only record.
 
 Reboot test 2026-10-02 (OnePlus 13, stock app disabled, no app opened):
 `sys.boot_completed` -> +0 s bridge listening + a11y keepalive enabled ->

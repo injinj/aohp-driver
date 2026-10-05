@@ -47,6 +47,8 @@ class DriverApp : Application() {
     val virtualDisplays by lazy { VirtualDisplayService() }
     val settings by lazy { Settings(this) }
     val ptySessions by lazy { PtySessionRegistry(containers) }
+    /** Per-env record of started services, replayed by the boot autostart. */
+    val services by lazy { ServiceRegistry.get(this) }
 
     companion object {
         lateinit var instance: DriverApp

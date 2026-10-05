@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import org.aohp.driver.DriverApp
 import org.aohp.driver.MainActivity
 import org.aohp.driver.R
+import org.aohp.driver.ServiceRegistry
 import java.net.InetSocketAddress
 
 data class BridgeState(
@@ -201,9 +202,12 @@ class BridgeService : Service() {
     }
 
     /**
-     * Boot path: wait for aohp_container (containerd) to answer, then start the
-     * openclaw-gateway service in every env flagged autostart. The gateway's
-     * launcher wrapper reads ANTHROPIC_API_KEY through this bridge, so the ws
+     * Boot path: wait for aohp_container (containerd) to answer, then, in every env flagged
+     * autostart, start again every service the ServiceRegistry recorded for it (anything
+     * started through the Harness tab or `aohp sandbox svc-start`, e.g. a net-watchdog), in
+     * their recorded order with openclaw-gateway moved last so network/VPN helpers are up
+     * first. An env with nothing recorded falls back to the old behaviour: just the gateway.
+     * The gateway's launcher wrapper reads ANTHROPIC_API_KEY through this bridge, so the ws
      * server must be up first (it is: called after startServer).
      */
     private suspend fun autostartGateways() {
@@ -231,11 +235,17 @@ class BridgeService : Service() {
         }
         for (env in envs.sorted()) {
             if (env !in containers) { log.append("$env: no such env\n"); continue }
-            val alive = app.containers.listServices(env).getOrNull()
-                ?.any { it.serviceId == GATEWAY_SERVICE_ID && it.alive } == true
-            if (alive) { log.append("$env: gateway already up\n"); continue }
-            val r = app.containers.startService(env, GATEWAY_SERVICE_ID, GATEWAY_COMMAND)
-            log.append(r.fold({ "$env: started $GATEWAY_SERVICE_ID pid $it\n" }, { "$env: start failed: ${it.message}\n" }))
+            val recorded = app.services.list(env)
+            val wanted = if (recorded.isEmpty()) listOf(ServiceRegistry.Entry(GATEWAY_SERVICE_ID, GATEWAY_COMMAND))
+                         else recorded.filter { it.serviceId != GATEWAY_SERVICE_ID } + recorded.filter { it.serviceId == GATEWAY_SERVICE_ID }
+            val alive = app.containers.listServices(env).getOrNull()?.filter { it.alive }?.map { it.serviceId }?.toSet() ?: emptySet()
+            for (e in wanted) {
+                if (e.serviceId in alive) { log.append("$env: ${e.serviceId} already up\n"); continue }
+                if (e.command.isEmpty()) { log.append("$env: ${e.serviceId} has no command, skipped\n"); continue }
+                val r = app.containers.startService(env, e.serviceId, e.command)
+                log.append(r.fold({ "$env: started ${e.serviceId} pid $it\n" }, { "$env: ${e.serviceId} start failed: ${it.message}\n" }))
+                if (e.serviceId != GATEWAY_SERVICE_ID) delay(500)
+            }
         }
         Log.i(TAG, "autostart: " + log.toString().trim().replace('\n', ';'))
         _state.value = _state.value.copy(autostartLog = log.toString().trim())
