@@ -256,7 +256,7 @@ flags, last autostart log) consumed by the Runtime card.
 `RECEIVE_BOOT_COMPLETED` -> `BootReceiver` -> `BridgeService.start(autostart=true)`:
 ws server first (the gateway launcher needs `secret.get`), then poll
 `listContainers()` every 2 s for up to 3 min, then for each env in
-`autostart_envs` (DataStore string set, Runtime card switch) replay the
+not in `autostart_off_envs` (DataStore string set; the Runtime card switch is an opt-out, default on since 0.5.0 - `autostart_envs` is only kept in step for older readers) replay the
 env's **ServiceRegistry** (0.3.0): every `{serviceId, command}` that was
 started through HarnessViewModel / SetupViewModel / the bridge's
 `sandbox.svc_start` and not stopped since (`sandbox.svc_stop`, Harness

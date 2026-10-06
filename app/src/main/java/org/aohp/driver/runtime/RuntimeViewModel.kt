@@ -46,7 +46,7 @@ data class RuntimeState(
     val refreshing: Boolean = false,
     val bridge: BridgeState = BridgeState(),
     val secretNames: List<String> = emptyList(),
-    val autostart: Set<String> = emptySet(),
+    val autostartOff: Set<String> = emptySet(),   // envs with the Autostart switch turned off (default on)
 )
 
 class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
@@ -61,7 +61,7 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { settings.selectedEnv.collect { sel -> _state.update { it.copy(selected = sel) } } }
         viewModelScope.launch { BridgeService.state.collect { b -> _state.update { it.copy(bridge = b) }; refreshSecrets() } }
-        viewModelScope.launch { settings.autostartEnvs.collect { a -> _state.update { it.copy(autostart = a) } } }
+        viewModelScope.launch { settings.autostartOffEnvs.collect { a -> _state.update { it.copy(autostartOff = a) } } }
         refresh()
         autoJob = viewModelScope.launch { while (true) { delay(10_000); if (_state.value.busy == null) refresh(quiet = true) } }
     }

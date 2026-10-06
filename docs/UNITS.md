@@ -84,7 +84,7 @@ killed by SIGHUP/SIGINT/SIGTERM/SIGPIPE.
 "stopping an env" = stopping every active unit in reverse order. containerd does **not** start envs by
 itself at device boot: the OpenClaw launcher wrapper reads its provider key through the Driver bridge,
 so the Driver's boot receiver starts the bridge first and then issues env-start for every env whose
-Autostart switch is on. Envs without any unit fall back to the 0.3.0 ServiceRegistry replay.
+Autostart switch is on (default on since 0.5.0; the switch is an opt-out). Envs without any unit fall back to the 0.3.0 ServiceRegistry replay.
 
 ### Legacy startService / stopService / listServices / serviceLog
 

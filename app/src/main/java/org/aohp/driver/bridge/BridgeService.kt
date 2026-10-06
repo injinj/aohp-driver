@@ -214,11 +214,7 @@ class BridgeService : Service() {
      */
     private suspend fun autostartGateways() {
         val app = application as DriverApp
-        val envs = app.settings.autostartEnvs.first()
-        if (envs.isEmpty()) {
-            _state.value = _state.value.copy(autostartLog = "autostart: no envs flagged")
-            return
-        }
+        val off = app.settings.autostartOffEnvs.first()
         if (!_state.value.running) {
             _state.value = _state.value.copy(autostartLog = "autostart: skipped, bridge not running")
             return
@@ -235,8 +231,13 @@ class BridgeService : Service() {
             _state.value = _state.value.copy(autostartLog = log.toString())
             return
         }
-        for (env in envs.sorted()) {
-            if (env !in containers) { log.append("$env: no such env\n"); continue }
+        // 0.5.0: every env autostarts unless its switch was turned off.
+        val envs = containers.filter { app.settings.isAutostart(it, off) }.sorted()
+        if (envs.isEmpty()) {
+            _state.value = _state.value.copy(autostartLog = if (containers.isEmpty()) "autostart: no envs" else "autostart: all envs switched off")
+            return
+        }
+        for (env in envs) {
             // units first (docs/UNITS.md)
             val units = if (app.containers.unitsSupported == false) null else app.containers.listUnits(env).getOrNull()
             if (units != null && units.any { it.loadState != "transient" }) {

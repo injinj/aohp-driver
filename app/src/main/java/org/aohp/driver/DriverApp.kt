@@ -25,11 +25,22 @@ class Settings(private val ctx: Context) {
         val BOOTSTRAP_REPO = stringPreferencesKey("bootstrap_repo")
         const val DEFAULT_REPO = "injinj/aohp-config-chris"
         val AUTOSTART_ENVS = stringSetPreferencesKey("autostart_envs")
+        /** 0.5.0: autostart is ON by default; this set holds the envs the user switched OFF. */
+        val AUTOSTART_OFF_ENVS = stringSetPreferencesKey("autostart_off_envs")
         val BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
     }
-    /** Envs whose openclaw-gateway the boot receiver starts (after the bridge is up). */
+    /**
+     * Envs the boot receiver must NOT start. Since 0.5.0 every env autostarts (env-start /
+     * registry replay) unless its Runtime-card switch was turned off; [AUTOSTART_ENVS] is kept
+     * in step for older readers but no longer decides anything.
+     */
+    val autostartOffEnvs: Flow<Set<String>> = ctx.dataStore.data.map { it[AUTOSTART_OFF_ENVS] ?: emptySet() }
+    /** Legacy (<= 0.4.0) explicit opt-in set; superseded by [autostartOffEnvs]. */
     val autostartEnvs: Flow<Set<String>> = ctx.dataStore.data.map { it[AUTOSTART_ENVS] ?: emptySet() }
+    fun isAutostart(env: String, off: Set<String>): Boolean = env !in off
     suspend fun setAutostart(env: String, on: Boolean) = ctx.dataStore.edit { p ->
+        val off = p[AUTOSTART_OFF_ENVS] ?: emptySet()
+        p[AUTOSTART_OFF_ENVS] = if (on) off - env else off + env
         val cur = p[AUTOSTART_ENVS] ?: emptySet()
         p[AUTOSTART_ENVS] = if (on) cur + env else cur - env
     }

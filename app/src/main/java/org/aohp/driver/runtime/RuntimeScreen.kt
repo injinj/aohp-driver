@@ -86,7 +86,7 @@ fun RuntimeScreen(modifier: Modifier = Modifier, vm: RuntimeViewModel = viewMode
                     item { BridgeCard(st, onStart = { vm.startBridge() }, onStop = { vm.stopBridge() }, onImport = { vm.importLegacySecrets() }) }
                     items(st.envs, key = { it.name }) { env ->
                         EnvCardView(env, selected = env.name == st.selected, busy = st.busy != null,
-                            autostart = env.name in st.autostart, onAutostart = { vm.setAutostart(env.name, it) },
+                            autostart = env.name !in st.autostartOff, onAutostart = { vm.setAutostart(env.name, it) },
                             onSelect = { vm.select(env.name) }, onReset = { resetTarget = env.name }, onDestroy = { destroyTarget = env.name })
                     }
                     if (st.envs.isEmpty()) item { Text("No environments. Use + to create one.", Modifier.padding(8.dp)) }

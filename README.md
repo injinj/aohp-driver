@@ -72,7 +72,7 @@ a11y keepalive from secure settings), then
 
 `BOOT_COMPLETED` -> `BootReceiver` -> `BridgeService.start(autostart=true)`
 -> ws server up -> poll `aohp_container.listContainers` (up to 3 min) ->
-for every env with the **Autostart** switch on: start again **every service
+for every env whose **Autostart** switch is on (**on by default since 0.5.0**; the switch is an opt-out stored as `autostart_off_envs`): start again **every service
 recorded for that env** (since 0.3.0; `ServiceRegistry`, SharedPreferences
 `services`, one `{serviceId, command}` list per env, written whenever a
 service is started/stopped through the Harness tab, the setup wizard or
