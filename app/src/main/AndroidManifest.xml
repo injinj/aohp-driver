@@ -19,6 +19,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- AppFunctions caller (appfn.list/execute). internal|privileged on Android 16: needs
+         priv-app + privapp-permissions-aohp-driver.xml, not just the platform signature. -->
+    <uses-permission android:name="android.permission.EXECUTE_APP_FUNCTIONS" />
 
     <application
         android:name=".DriverApp"

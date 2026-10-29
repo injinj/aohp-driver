@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Privileged-permission allowlist for the AOHP Driver (org.aohp.driver), a platform-signed
+     priv-app since 0.7.0. LineageOS enforces the allowlist (ro.control_privapp_permissions=enforce):
+     EVERY signature|privileged permission the Driver declares must be listed here, or system_server
+     throws IllegalStateException in AppIdPermissionPolicy.onSystemReady and the phone bootloops
+     (bitten 2026-10-29 build-8: only EXECUTE_APP_FUNCTIONS was listed). Regenerate when the
+     manifest gains a permission: grep the manifest, check protectionLevel in
+     frameworks/base/core/res/AndroidManifest.xml, add anything containing "privileged". -->
+<permissions>
+    <privapp-permissions package="org.aohp.driver">
+        <permission name="android.permission.EXECUTE_APP_FUNCTIONS"/>
+        <permission name="android.permission.FORCE_STOP_PACKAGES"/>
+        <permission name="android.permission.MANAGE_AOHP_VIRTUAL_DISPLAY"/>
+        <permission name="android.permission.REAL_GET_TASKS"/>
+        <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
+    </privapp-permissions>
+</permissions>

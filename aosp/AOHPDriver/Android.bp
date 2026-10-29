@@ -2,34 +2,25 @@ package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
-// AOHP Driver (org.aohp.driver): replacement for the AOHPAgentDriver demo app.
-// Runtime / Harness / Terminal / Web UI plus the agent bridge (ws JSON-RPC on
-// 127.0.0.1:6666 for the aohp CLI inside the container).
-//
-// Prebuilt APK, NOT in git: build it from /aosp/aohp/aohp-app/aohp-driver with
-//   scripts/update-aosp-prebuilt.sh
-// which runs the Gradle release build and copies app-release-unsigned.apk here as
-// AOHPDriver.apk. Soong re-signs it with the platform key (certificate: "platform").
-//
-// Not privileged on purpose: every permission the Driver needs is signature-level
-// (MANAGE_AOHP_VIRTUAL_DISPLAY, INJECT_EVENTS, WRITE_SECURE_SETTINGS, FORCE_STOP_PACKAGES,
-// REAL_GET_TASKS) and granted by the platform signature alone, which also gives hidden-API
-// access (ServiceManager.getService). system/app therefore needs no privapp-permissions
-// allowlist (the stock app's privapp-permissions-aohp.xml is not carried for it).
-// Keep the Driver out of the first-boot "stopped" state so BOOT_COMPLETED reaches it
-// (bridge + gateway autostart before the app was ever opened). Read by SystemConfig from
-// /system/etc/sysconfig/.
 prebuilt_etc {
     name: "initial-package-stopped-states-aohp.xml",
     src: "initial-package-stopped-states-aohp.xml",
     sub_dir: "sysconfig",
 }
 
+// EXECUTE_APP_FUNCTIONS is internal|privileged (Android 16, app_function_access_api_enabled off):
+// the platform signature alone cannot grant it, so the Driver is a priv-app with an allowlist.
+// The SELinux domain stays platform_app (seinfo=platform wins over isPrivApp).
+prebuilt_etc {
+    name: "privapp-permissions-aohp-driver.xml",
+    src: "privapp-permissions-aohp-driver.xml",
+    sub_dir: "permissions",
+}
+
 android_app_import {
     name: "AOHPDriver",
     apk: "AOHPDriver.apk",
     certificate: "platform",
-    privileged: false,
-    // The Driver's manifest declares no <uses-library> tags (Compose-only, no AndroidX Window),
-    // and Soong's manifest_check requires the build-system list to match exactly.
+    privileged: true,
+    required: ["privapp-permissions-aohp-driver.xml"],
 }

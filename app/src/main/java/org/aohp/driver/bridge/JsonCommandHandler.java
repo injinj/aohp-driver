@@ -75,6 +75,7 @@ public final class JsonCommandHandler {
     private final AohpContainerClient mContainer;
     private final AohpEventStreamClient mEventStream;
     private final AohpSecurityBridgeClient mSecurityBridge;
+    private final AppFunctionsClient mAppFn;
 
     public JsonCommandHandler(Context context) {
         mContext = context.getApplicationContext();
@@ -86,6 +87,7 @@ public final class JsonCommandHandler {
         mSecrets = new SecretStore(mContext);
         mEventStream = new AohpEventStreamClient(mContext);
         mSecurityBridge = new AohpSecurityBridgeClient();
+        mAppFn = new AppFunctionsClient(mContext);
     }
 
     public void dispatch(WebSocket conn, String message) {
@@ -195,6 +197,10 @@ public final class JsonCommandHandler {
                 return sysNotifications(p);
             case "sys.notify":
                 return completedJson(() -> sysNotify(p));
+            case "appfn.list":
+                return mAppFn.list(p);
+            case "appfn.execute":
+                return mAppFn.execute(p);
             case "sys.notify_replies":
                 return CompletableFuture.supplyAsync(() -> {
                     try {
@@ -286,6 +292,7 @@ public final class JsonCommandHandler {
         o.put("bridge", "aohp-driver");
         JSONArray features = new JSONArray();
         features.put("secrets");
+        features.put("appfn");
         o.put("features", features);
         return o;
     }
