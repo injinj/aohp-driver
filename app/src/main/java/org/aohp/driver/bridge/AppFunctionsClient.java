@@ -177,17 +177,34 @@ public final class AppFunctionsClient {
         Boolean enabled = null;
         for (SearchResult joined : r.getJoinedResults()) {
             GenericDocument rt = joined.getGenericDocument();
-            if (rt.getSchemaType().startsWith(RUNTIME_SCHEMA_TYPE)
-                    && rt.getProperty(PROP_ENABLED) != null) {
-                enabled = rt.getPropertyBoolean(PROP_ENABLED);
+            if (rt.getSchemaType().startsWith(RUNTIME_SCHEMA_TYPE)) {
+                Boolean b = readBool(rt, PROP_ENABLED);
+                if (b != null) enabled = b;
             }
         }
-        if (enabled == null && d.getProperty(PROP_ENABLED_BY_DEFAULT) != null) {
-            enabled = d.getPropertyBoolean(PROP_ENABLED_BY_DEFAULT);
-        }
+        if (enabled == null) enabled = readBool(d, PROP_ENABLED_BY_DEFAULT);
         if (enabled != null) o.put("enabled", enabled);
         if (verbose) o.put("static", docToJson(d));
         return o;
+    }
+
+    /**
+     * Boolean property that may be stored as boolean[] (static metadata's enabledByDefault) or
+     * long[] 0/1 (the runtime metadata's "enabled", written by AppFunctionManagerService's
+     * set-enabled path). getPropertyBoolean() on the long form throws ClassCastException inside
+     * AppSearch and yields false — seen on 23.2 after `cmd app_function set-enabled`.
+     */
+    private static Boolean readBool(GenericDocument d, String prop) {
+        Object v = d.getProperty(prop);
+        if (v == null) return null;
+        if (v.getClass().isArray()) {
+            if (Array.getLength(v) == 0) return null;
+            v = Array.get(v, 0);
+        }
+        if (v instanceof Boolean) return (Boolean) v;
+        if (v instanceof Number) return ((Number) v).longValue() != 0;
+        if (v instanceof String) return Boolean.parseBoolean((String) v) || "1".equals(v);
+        return null;
     }
 
     private static void putIfPresent(JSONObject o, String key, GenericDocument d, String prop)
